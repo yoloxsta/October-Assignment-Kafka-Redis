@@ -108,7 +108,7 @@ async function connectKafka() {
   console.log('✅ Kafka Consumer connected');
 
   // Subscribe to topics we want to consume
-  await consumer.subscribe({ topics: ['orders', 'notifications'], fromBeginning: true });
+  await consumer.subscribe({ topics: ['orders', 'notifications', 'demo-topic'], fromBeginning: false });
 
   // Start consuming messages
   await runConsumer();
@@ -117,29 +117,106 @@ async function connectKafka() {
 // =============================================================================
 // KAFKA CONSUMER - Process incoming messages
 // =============================================================================
+/**
+ * KAFKA FLOW DEMONSTRATION:
+ * 
+ * 1. PRODUCER (send) → Sends message to Kafka topic
+ * 2. KAFKA           → Stores message in partition
+ * 3. CONSUMER        → Reads message from topic
+ * 4. PROCESS         → Does something with the message
+ * 5. STORE           → Saves result (database, cache, etc.)
+ * 
+ * This consumer demonstrates the RETRIEVE and PROCESS steps.
+ */
 async function runConsumer() {
   await consumer.run({
     eachMessage: async ({ topic, partition, message }) => {
-      console.log(`\n📨 KAFKA MESSAGE RECEIVED:`);
-      console.log(`   Topic: ${topic}`);
-      console.log(`   Partition: ${partition}`);
-      console.log(`   Offset: ${message.offset}`);
-      console.log(`   Key: ${message.key?.toString()}`);
-      console.log(`   Value: ${message.value?.toString()}`);
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`📨 KAFKA MESSAGE RETRIEVED`);
+      console.log(`${'='.repeat(60)}`);
+      console.log(`   Topic      : ${topic}`);
+      console.log(`   Partition  : ${partition}`);
+      console.log(`   Offset     : ${message.offset}`);
+      console.log(`   Key        : ${message.key?.toString()}`);
+      console.log(`   Timestamp  : ${new Date(parseInt(message.timestamp)).toISOString()}`);
+      console.log(`   Raw Value  : ${message.value?.toString()}`);
 
-      // Process based on topic
+      // Parse the message
       const data = JSON.parse(message.value.toString());
+      console.log(`\n🔄 PROCESSING MESSAGE...`);
+      
+      // Process based on topic (this is where business logic goes)
+      let processResult;
       
       if (topic === 'orders') {
-        // Process order (e.g., update database, send email)
-        console.log(`   📦 Processing order: ${data.orderId}`);
+        // ORDER PROCESSING WORKFLOW
+        console.log(`   Type: ORDER PROCESSING`);
+        console.log(`   Action: Updating order status in database`);
         
-        // Update order status in database
-        await pool.query(
-          'UPDATE orders SET status = $1 WHERE id = $2',
-          [data.status, data.orderId]
-        );
+        // Simulate processing: Update order in database
+        if (data.orderId && data.status) {
+          await pool.query(
+            'UPDATE orders SET status = $1 WHERE id = $2',
+            [data.status, data.orderId]
+          );
+          console.log(`   ✅ Order ${data.orderId} status updated to: ${data.status}`);
+        }
+        
+        processResult = {
+          type: 'order_processed',
+          orderId: data.orderId,
+          newStatus: data.status,
+          processedBy: 'lab-backend-consumer'
+        };
+      } 
+      else if (topic === 'notifications') {
+        // NOTIFICATION PROCESSING WORKFLOW
+        console.log(`   Type: NOTIFICATION PROCESSING`);
+        console.log(`   Action: Would send email/push notification here`);
+        
+        processResult = {
+          type: 'notification_sent',
+          message: data.message,
+          sentAt: new Date().toISOString(),
+          processedBy: 'lab-backend-consumer'
+        };
       }
+      else if (topic === 'demo-topic') {
+        // DEMO TOPIC - For learning Kafka flow
+        console.log(`   Type: DEMO MESSAGE`);
+        console.log(`   Action: Processing demo message`);
+        
+        // Simulate some processing (e.g., transform data)
+        processResult = {
+          type: 'demo_processed',
+          original: data,
+          transformed: {
+            ...data,
+            processed: true,
+            processedAt: new Date().toISOString(),
+            consumerId: 'lab-backend-consumer'
+          }
+        };
+      }
+      else {
+        processResult = {
+          type: 'unknown_topic',
+          topic,
+          data
+        };
+      }
+
+      // Store the processed result
+      const stored = storeProcessedMessage(topic, {
+        key: message.key?.toString(),
+        value: data,
+        result: processResult
+      });
+      
+      console.log(`\n💾 STORING RESULT`);
+      console.log(`   Stored ID: ${stored.id}`);
+      console.log(`   Status: ${stored.status}`);
+      console.log(`${'='.repeat(60)}\n`);
     },
   });
 }
@@ -159,6 +236,26 @@ async function sendKafkaMessage(topic, key, value) {
     ],
   });
   console.log(`📤 Kafka message sent to topic: ${topic}`);
+}
+
+// =============================================================================
+// KAFKA MESSAGE STORAGE - Store processed messages for retrieval
+// =============================================================================
+// This simulates what a real service would do when processing messages
+const processedMessages = [];  // In-memory store for demo purposes
+
+// Store a processed message
+function storeProcessedMessage(topic, message) {
+  const record = {
+    id: Date.now(),
+    topic,
+    message,
+    processedAt: new Date().toISOString(),
+    status: 'processed'
+  };
+  processedMessages.unshift(record);  // Add to beginning
+  if (processedMessages.length > 100) processedMessages.pop();  // Keep last 100
+  return record;
 }
 
 // =============================================================================
@@ -410,20 +507,123 @@ app.post('/api/notifications', async (req, res) => {
 });
 
 // =============================================================================
-// KAFKA DEMONSTRATION ROUTES
+// KAFKA FLOW DEMONSTRATION - SEND → KAFKA → RETRIEVE → PROCESS
 // =============================================================================
+/**
+ * -------------------------------------------------------------------------
+ * KAFKA FLOW DEMO - Clear demonstration of the complete flow
+ * -------------------------------------------------------------------------
+ * 
+ * FLOW:
+ * 1. SEND: Client calls /api/kafka/send → Producer sends to Kafka
+ * 2. STORE: Kafka stores message in topic partition
+ * 3. RETRIEVE: Consumer reads message from topic
+ * 4. PROCESS: Consumer processes the message (business logic)
+ * 5. STORE RESULT: Result saved for retrieval
+ * 
+ * You can see:
+ * - Sent messages: /api/kafka/messages/sent
+ * - Processed messages: /api/kafka/messages/processed
+ * -------------------------------------------------------------------------
+ */
+
+// Track sent messages for demo
+const sentMessages = [];
+
+// SEND a message to Kafka (Producer)
+app.post('/api/kafka/send', async (req, res) => {
+  try {
+    const { topic = 'demo-topic', message } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    // Generate unique ID
+    const messageId = Date.now().toString();
+    
+    // Prepare message payload
+    const payload = {
+      id: messageId,
+      ...message,
+      sentAt: new Date().toISOString()
+    };
+
+    console.log(`\n${'▶'.repeat(60)}`);
+    console.log(`📤 SEND: Publishing to Kafka topic "${topic}"`);
+    console.log(`${'▶'.repeat(60)}`);
+    console.log(`   Message ID: ${messageId}`);
+    console.log(`   Payload: ${JSON.stringify(payload, null, 2)}`);
+
+    // SEND TO KAFKA (Producer)
+    await producer.send({
+      topic,
+      messages: [
+        {
+          key: messageId,
+          value: JSON.stringify(payload),
+          timestamp: Date.now().toString()
+        }
+      ]
+    });
+
+    // Track sent message
+    const sentRecord = {
+      id: messageId,
+      topic,
+      message: payload,
+      sentAt: new Date().toISOString(),
+      status: 'sent'
+    };
+    sentMessages.unshift(sentRecord);
+    if (sentMessages.length > 100) sentMessages.pop();
+
+    console.log(`   ✅ Message sent to Kafka!`);
+    console.log(`   ⏳ Consumer will RETRIEVE and PROCESS shortly...`);
+    console.log(`${'▶'.repeat(60)}\n`);
+
+    res.json({
+      success: true,
+      flow: {
+        step1_send: '✅ COMPLETED - Message sent to Kafka',
+        step2_store: '⏳ Kafka storing message in partition',
+        step3_retrieve: '⏳ Consumer will retrieve message',
+        step4_process: '⏳ Consumer will process message'
+      },
+      message: sentRecord
+    });
+  } catch (error) {
+    console.error('Error sending to Kafka:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// RETRIEVE processed messages (from Consumer)
+app.get('/api/kafka/messages/processed', (req, res) => {
+  res.json({
+    count: processedMessages.length,
+    messages: processedMessages
+  });
+});
+
+// RETRIEVE sent messages (from Producer)
+app.get('/api/kafka/messages/sent', (req, res) => {
+  res.json({
+    count: sentMessages.length,
+    messages: sentMessages
+  });
+});
+
+// CLEAR messages (for testing)
+app.delete('/api/kafka/messages', (req, res) => {
+  processedMessages.length = 0;
+  sentMessages.length = 0;
+  res.json({ message: 'All Kafka messages cleared' });
+});
 
 /**
  * -------------------------------------------------------------------------
- * KAFKA DEMO: ORDER PROCESSING
- * -------------------------------------------------------------------------
- * WHAT: Send order events to Kafka
- * WHY: Decouple order creation from processing
- *      Multiple services can consume the same event:
- *      - Inventory service (update stock)
- *      - Email service (send confirmation)
- *      - Analytics service (track sales)
- * HOW: Producer sends message to 'orders' topic
+ * KAFKA DEMO: ORDER PROCESSING (Real-world example)
  * -------------------------------------------------------------------------
  */
 

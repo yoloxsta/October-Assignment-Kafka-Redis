@@ -432,6 +432,198 @@ ZREVRANGE leaderboard 0 9 WITHSCORES  →  Get top 10, highest first
 
 ## 🧪 API Testing Guide
 
+### 🔴 Redis Tests
+
+```bash
+# Test Caching
+curl http://localhost:3001/api/products/1
+# First: {"source":"database"} → Second: {"source":"cache"}
+```
+
+---
+
+### 📨 Kafka Flow Lab - SEND → RETRIEVE → PROCESS
+
+This is the core Kafka learning demo. You can clearly see:
+1. **SEND**: Producer publishes message to Kafka
+2. **RETRIEVE**: Consumer reads message from Kafka
+3. **PROCESS**: Consumer transforms/handles the message
+
+#### Step 1: SEND a Message to Kafka
+
+```bash
+# Send a message to "demo-topic"
+curl -X POST http://localhost:3001/api/kafka/send \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"demo-topic","message":{"text":"Hello Kafka!","userId":1}}'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "flow": {
+    "step1_send": "✅ COMPLETED - Message sent to Kafka",
+    "step2_store": "⏳ Kafka storing message in partition",
+    "step3_retrieve": "⏳ Consumer will retrieve message",
+    "step4_process": "⏳ Consumer will process message"
+  },
+  "message": {
+    "id": "1790090875998",
+    "topic": "demo-topic",
+    "message": {"text": "Hello Kafka!", "userId": 1},
+    "status": "sent"
+  }
+}
+```
+
+#### Step 2: Check SENT Messages
+
+```bash
+curl http://localhost:3001/api/kafka/messages/sent
+```
+
+#### Step 3: Check PROCESSED Messages
+
+```bash
+curl http://localhost:3001/api/kafka/messages/processed
+```
+
+**Response:**
+```json
+{
+  "count": 1,
+  "messages": [{
+    "id": 1790090876042,
+    "topic": "demo-topic",
+    "message": {
+      "key": "1790090875998",
+      "value": {"text": "Hello Kafka!", "userId": 1},
+      "result": {
+        "type": "demo_processed",
+        "original": {"text": "Hello Kafka!", "userId": 1},
+        "transformed": {
+          "text": "Hello Kafka!",
+          "userId": 1,
+          "processed": true,           ← Added by consumer
+          "processedAt": "2026-09-22T15:27:56.041Z",
+          "consumerId": "lab-backend-consumer"
+        }
+      }
+    },
+    "status": "processed"
+  }]
+}
+```
+
+#### Step 4: See the Flow in Backend Logs
+
+```bash
+docker logs lab-backend 2>&1 | tail -50
+```
+
+You'll see:
+```
+📤 SEND: Publishing to Kafka topic "demo-topic"
+   ✅ Message sent to Kafka!
+
+📨 KAFKA MESSAGE RETRIEVED
+   Topic: demo-topic
+   Offset: 0
+   
+🔄 PROCESSING MESSAGE...
+   Type: DEMO MESSAGE
+   
+💾 STORING RESULT
+   Status: processed
+```
+
+#### Step 5: Clear and Repeat
+
+```bash
+# Clear all messages
+curl -X DELETE http://localhost:3001/api/kafka/messages
+
+# Send again
+curl -X POST http://localhost:3001/api/kafka/send \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"demo-topic","message":{"action":"test","data":"anything"}}'
+```
+
+---
+
+### Kafka Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        KAFKA MESSAGE FLOW                                    │
+│                                                                              │
+│  1. SEND (Producer)                                                          │
+│  ┌──────────┐         ┌─────────────────────────────────────┐               │
+│  │  Client  │────────▶│ POST /api/kafka/send               │               │
+│  │          │         │ {topic: "demo-topic", message: {}} │               │
+│  └──────────┘         └──────────────────┬──────────────────┘               │
+│                                          │                                   │
+│                                          ▼                                   │
+│                              ┌─────────────────────┐                        │
+│                              │   KAFKA PRODUCER    │                        │
+│                              │   send() to topic   │                        │
+│                              └──────────┬──────────┘                        │
+│                                         │                                    │
+│  2. STORE                                ▼                                    │
+│                              ┌─────────────────────┐                        │
+│                              │   KAFKA BROKER      │                        │
+│                              │   Topic: demo-topic │                        │
+│                              │   Partition: 0      │                        │
+│                              │   Offset: 0, 1, 2...│                        │
+│                              └──────────┬──────────┘                        │
+│                                         │                                    │
+│  3. RETRIEVE                             ▼                                    │
+│                              ┌─────────────────────┐                        │
+│                              │   KAFKA CONSUMER    │                        │
+│                              │   eachMessage()     │                        │
+│                              └──────────┬──────────┘                        │
+│                                         │                                    │
+│  4. PROCESS                              ▼                                    │
+│                              ┌─────────────────────┐                        │
+│                              │   BUSINESS LOGIC    │                        │
+│                              │   • Transform data  │                        │
+│                              │   • Update DB       │                        │
+│                              │   • Send emails     │                        │
+│                              └──────────┬──────────┘                        │
+│                                         │                                    │
+│  5. STORE RESULT                         ▼                                    │
+│                              ┌─────────────────────┐                        │
+│                              │   storeProcessed    │                        │
+│                              │   Message()         │                        │
+│                              └──────────┬──────────┘                        │
+│                                         │                                    │
+│                                         ▼                                    │
+│  6. RETRIEVE RESULT         ┌─────────────────────────────┐                │
+│                             │ GET /api/kafka/messages/    │                │
+│                             │     processed               │                │
+│                             └─────────────────────────────┘                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Real-World Example: Order Processing
+
+```bash
+# Create order (sends Kafka event)
+curl -X POST http://localhost:3001/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"userId":1,"items":[{"productId":1,"quantity":2,"price":999.99}]}'
+
+# The consumer will:
+# 1. Receive order event
+# 2. Update order status in database
+# 3. Store result for retrieval
+```
+
+---
+
 ### Test Redis Caching
 
 ```bash
