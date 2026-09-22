@@ -49,6 +49,7 @@ function App() {
   const [sentMessages, setSentMessages] = useState([]);
   const [processedMessages, setProcessedMessages] = useState([]);
   const [kafkaFlowStep, setKafkaFlowStep] = useState(0); // 0=none, 1=sending, 2=sent, 3=retrieved, 4=processed
+  const [newMessageAlert, setNewMessageAlert] = useState(null); // Alert for new messages from Kafka UI
 
   // Logs
   const [logs, setLogs] = useState([]);
@@ -288,11 +289,34 @@ function App() {
     }
   };
 
-  // Fetch processed messages
-  const fetchProcessedMessages = async () => {
+  // Fetch processed messages - with alert for new messages
+  const prevProcessedCount = React.useRef(0);
+  
+  const fetchProcessedMessages = async (showNoti = false) => {
     try {
       const res = await axios.get(`${API_URL}/kafka/messages/processed`);
-      setProcessedMessages(res.data.messages);
+      const newMessages = res.data.messages;
+      
+      // Check if there are new messages (manual upload from Kafka UI)
+      if (showNoti && newMessages.length > prevProcessedCount.current) {
+        const newCount = newMessages.length - prevProcessedCount.current;
+        const latestMsg = newMessages[0];
+        
+        // Show alert box instead of notification
+        setNewMessageAlert({
+          count: newCount,
+          message: latestMsg,
+          time: new Date().toLocaleTimeString()
+        });
+        
+        addLog(`📥 ${newCount} new message(s) retrieved from Kafka!`, 'success');
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => setNewMessageAlert(null), 5000);
+      }
+      
+      prevProcessedCount.current = newMessages.length;
+      setProcessedMessages(newMessages);
     } catch (err) {
       addLog('Failed to fetch processed messages', 'error');
     }
@@ -304,12 +328,23 @@ function App() {
       await axios.delete(`${API_URL}/kafka/messages`);
       setSentMessages([]);
       setProcessedMessages([]);
+      prevProcessedCount.current = 0;
       setKafkaFlowStep(0);
       addLog('All Kafka messages cleared', 'success');
     } catch (err) {
       addLog('Failed to clear messages', 'error');
     }
   };
+
+  // Auto-polling for new Kafka messages (every 2 seconds)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchProcessedMessages(true); // true = show notification for new messages
+      fetchSentMessages();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Initial load
   useEffect(() => {
@@ -537,6 +572,39 @@ function App() {
         <section className="section" style={{ gridColumn: 'span 2' }}>
           <h2>📨 Kafka Flow Demo: SEND → RETRIEVE → PROCESS</h2>
           <p><small>See the complete Kafka message flow in real-time</small></p>
+
+          {/* NEW MESSAGE ALERT - Shows when message arrives from Kafka UI */}
+          {newMessageAlert && (
+            <div style={{
+              background: 'linear-gradient(135deg, #38a169 0%, #2f855a 100%)',
+              border: '2px solid #68d391',
+              borderRadius: '10px',
+              padding: '20px',
+              marginBottom: '20px',
+              animation: 'pulse 1s infinite'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ margin: 0, color: '#fff' }}>📨 New Message Received from Kafka!</h3>
+                  <p style={{ margin: '5px 0', color: '#c6f6d5' }}>
+                    {newMessageAlert.count} new message(s) arrived at {newMessageAlert.time}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setNewMessageAlert(null)}
+                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', padding: '5px 15px', borderRadius: '5px', cursor: 'pointer' }}
+                >
+                  Dismiss
+                </button>
+              </div>
+              <div style={{ marginTop: '15px', background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '5px' }}>
+                <strong>Message:</strong>
+                <pre style={{ margin: '5px 0', color: '#fff', fontSize: '12px' }}>
+                  {JSON.stringify(newMessageAlert.message?.message?.value, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
 
           {/* Flow Steps Visual */}
           <div style={{ 

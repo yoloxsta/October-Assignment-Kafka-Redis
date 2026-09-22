@@ -186,15 +186,32 @@ async function runConsumer() {
         console.log(`   Type: DEMO MESSAGE`);
         console.log(`   Action: Processing demo message`);
         
+        // Check if this is a manual message from Kafka UI (raw string)
+        let messageData = data;
+        
+        // Handle different message formats
+        if (typeof data === 'string') {
+          // Raw string message from Kafka UI
+          messageData = { text: data, manual: true };
+        } else if (data.value && typeof data.value === 'string') {
+          // Key-value message from Kafka UI
+          try {
+            messageData = { ...data, parsed: JSON.parse(data.value) };
+          } catch {
+            messageData = { ...data, value: data.value };
+          }
+        }
+        
         // Simulate some processing (e.g., transform data)
         processResult = {
           type: 'demo_processed',
           original: data,
           transformed: {
-            ...data,
+            ...messageData,
             processed: true,
             processedAt: new Date().toISOString(),
-            consumerId: 'lab-backend-consumer'
+            consumerId: 'lab-backend-consumer',
+            source: data.manual ? 'KAFKA_UI_MANUAL' : 'API'
           }
         };
       }
