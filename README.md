@@ -419,14 +419,95 @@ ZREVRANGE leaderboard 0 9 WITHSCORES  →  Get top 10, highest first
 
 ---
 
+#### 📨 Demo 5: Kafka Flow Lab - SEND → RETRIEVE → PROCESS
+
+This is the **core Kafka learning demo**. You can clearly see the complete message flow.
+
+**What's happening:**
+```
+┌──────────────────────────────────────────────────────────────┐
+│  STEP 1: SEND                                                │
+│  User types message → Click "Send to Kafka"                 │
+│           │                                                  │
+│           ▼                                                  │
+│  STEP 2: STORE                                               │
+│  Backend publishes to Kafka "demo-topic"                    │
+│           │                                                  │
+│           ▼                                                  │
+│  STEP 3: RETRIEVE                                            │
+│  Kafka Consumer reads message from topic                    │
+│           │                                                  │
+│           ▼                                                  │
+│  STEP 4: PROCESS                                             │
+│  Consumer transforms message, adds metadata                 │
+│           │                                                  │
+│           ▼                                                  │
+│  Frontend polls every 2s and updates UI                     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. Find the **"📨 Kafka Flow Demo: SEND → RETRIEVE → PROCESS"** section
+2. Type a message in the input box
+3. Click **"Send to Kafka"**
+4. Watch the **flow steps** update (Sending → Sent → Retrieving → Processed)
+5. See the message appear in **Processed Messages** panel
+6. Check the **Activity Log** for detailed steps
+
+---
+
+#### 🎯 Demo 6: Manual Kafka Message (Kafka UI → Backend → Frontend)
+
+This demonstrates **external message injection** - simulating another service publishing to Kafka.
+
+**Steps:**
+
+1. **Open Kafka UI**: http://localhost:8080
+
+2. **Navigate to Topics**:
+   - Click **Topics** → **demo-topic**
+
+3. **Produce a Message**:
+   - Click **"Produce Message"** button
+   - Enter this JSON:
+     ```json
+     {"text": "Hello from Kafka UI!", "userId": 123}
+     ```
+   - Click **"Submit"**
+
+4. **Watch the Frontend** (http://localhost:3000):
+   - Within **2 seconds**, a **green alert box** appears:
+     ```
+     ┌───────────────────────────────────────────────────────┐
+     │  📨 New Message Received from Kafka!                  │
+     │  1 new message(s) arrived at 3:45:30 PM  [Dismiss]    │
+     │                                                       │
+     │  Message:                                            │
+     │  {                                                   │
+     │    "text": "Hello from Kafka UI!",                   │
+     │    "userId": 123                                     │
+     │  }                                                   │
+     └───────────────────────────────────────────────────────┘
+     ```
+   - The **Processed Messages** panel auto-updates
+   - The **Activity Log** shows: `📥 1 new message(s) retrieved from Kafka!`
+
+**This demonstrates:**
+- Kafka UI acts as a **separate producer**
+- Backend **consumer** picks up the message
+- Frontend **polls** for updates every 2 seconds
+- **Visual alert** appears for new messages
+
+---
+
 ### Kafka UI Walkthrough (http://localhost:8080)
 
 **Steps:**
 1. Click **Topics** in left sidebar
-2. Click **orders** topic
+2. Click **demo-topic** or **orders** topic
 3. Click **Messages** tab
-4. You'll see all order events with full JSON payload
-5. Create a new order in React UI, then refresh to see new message
+4. You'll see all events with full JSON payload
+5. Create a new message (as shown in Demo 6), then refresh to see it
 
 ---
 
