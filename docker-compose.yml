@@ -1,0 +1,247 @@
+# =============================================================================
+# DOCKER COMPOSE - FULL STACK LEARNING LAB
+# =============================================================================
+# This compose file sets up 6 services for learning Redis and Kafka:
+# 1. PostgreSQL - Relational database for persistent data
+# 2. Redis - In-memory cache and message broker
+# 3. Zookeeper - Required by Kafka for coordination
+# 4. Kafka - Distributed event streaming platform
+# 5. Backend - Node.js Express API
+# 6. Frontend - React application
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # POSTGRESQL - Relational Database
+  # ===========================================================================
+  # WHAT: PostgreSQL is a powerful, open-source relational database
+  # WHY: Stores persistent data (users, orders, etc.) that must survive restarts
+  # HOW: We use the official Postgres image with a custom init script
+  # ===========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: lab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: labuser
+      POSTGRES_PASSWORD: labpass123
+      POSTGRES_DB: labdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labuser -d labdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lab-network
+
+  # ===========================================================================
+  # REDIS - In-Memory Data Store
+  # ===========================================================================
+  # WHAT: Redis is an in-memory key-value store (super fast, ~1ms latency)
+  # WHY USE CASES:
+  #   1. CACHING - Store frequently accessed data to reduce DB load
+  #   2. SESSION STORAGE - Store user sessions (fast, auto-expiring)
+  #   3. RATE LIMITING - Count requests per user/IP
+  #   4. PUB/SUB - Simple message passing (lighter than Kafka)
+  #   5. LEADERBOARDS - Sorted sets for rankings
+  # HOW: We expose port 6379 and use redis-cli to interact
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: lab-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lab-network
+
+  # ===========================================================================
+  # ZOOKEEPER - Kafka Coordination Service
+  # ===========================================================================
+  # WHAT: Zookeeper manages Kafka brokers (leader election, configs, etc.)
+  # WHY: Kafka needs Zookeeper to coordinate between brokers
+  # HOW: Single node for development (KRaft mode available in newer versions)
+  # ===========================================================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: lab-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - lab-network
+
+  # ===========================================================================
+  # KAFKA - Distributed Event Streaming Platform
+  # ===========================================================================
+  # WHAT: Kafka is a distributed event streaming platform for high-throughput
+  # WHY USE CASES:
+  #   1. EVENT SOURCING - Log all changes to data
+  #   2. MESSAGE QUEUE - Decouple services (producer/consumer pattern)
+  #   3. LOG AGGREGATION - Collect logs from multiple services
+  #   4. STREAM PROCESSING - Real-time data processing
+  #   5. COMMIT LOG - Distributed commit log for replication
+  # HOW: 
+  #   - Topics: Categories for messages (like a folder)
+  #   - Producers: Send messages to topics
+  #   - Consumers: Read messages from topics
+  #   - Partitions: Split topics for parallelism
+  #   - Offsets: Position of consumer in a partition
+  # ===========================================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: lab-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      
+      # LISTENERS: How clients connect to Kafka
+      # INTERNAL (9092) - For internal Docker network
+      # EXTERNAL (9093) - For host machine connections
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      
+      # TOPIC AUTO-CREATION (dev only - disable in production)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      
+      # OFFSETS: How long Kafka keeps messages
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "-bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks:
+      - lab-network
+
+  # ===========================================================================
+  # KAFKA UI - Web Interface for Kafka (Optional but helpful for learning)
+  # ===========================================================================
+  # WHAT: Web UI to view topics, messages, and consumers
+  # WHY: Makes it easy to see what's happening in Kafka
+  # HOW: Access at http://localhost:8080
+  # ===========================================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: lab-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: lab-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - lab-network
+
+  # ===========================================================================
+  # BACKEND - Node.js Express API
+  # ===========================================================================
+  # WHAT: REST API that demonstrates Redis caching and Kafka messaging
+  # WHY: Shows practical integration patterns
+  # HOW: Connects to PostgreSQL, Redis, and Kafka
+  # ===========================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lab-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      
+      # PostgreSQL connection
+      DATABASE_URL: postgresql://labuser:labpass123@postgres:5432/labdb
+      
+      # Redis connection
+      REDIS_URL: redis://redis:6379
+      
+      # Kafka connection
+      KAFKA_BROKERS: kafka:9092
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - lab-network
+
+  # ===========================================================================
+  # FRONTEND - React Application
+  # ===========================================================================
+  # WHAT: Web UI to interact with all services
+  # WHY: Visual demonstration of Redis and Kafka functionality
+  # HOW: Calls backend API, shows real-time updates
+  # ===========================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lab-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:3001
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - lab-network
+
+# =============================================================================
+# NETWORKS - Isolated network for all services
+# =============================================================================
+networks:
+  lab-network:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES - Persistent storage
+# =============================================================================
+volumes:
+  postgres_data:
+  redis_data:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
