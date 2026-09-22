@@ -43,6 +43,13 @@ function App() {
   const [selectedUser, setSelectedUser] = useState('');
   const [cart, setCart] = useState([]);
 
+  // Kafka Flow Demo
+  const [kafkaTopic, setKafkaTopic] = useState('demo-topic');
+  const [kafkaMessage, setKafkaMessage] = useState('');
+  const [sentMessages, setSentMessages] = useState([]);
+  const [processedMessages, setProcessedMessages] = useState([]);
+  const [kafkaFlowStep, setKafkaFlowStep] = useState(0); // 0=none, 1=sending, 2=sent, 3=retrieved, 4=processed
+
   // Logs
   const [logs, setLogs] = useState([]);
 
@@ -230,6 +237,80 @@ function App() {
     }
   };
 
+  // ===========================================================================
+  // KAFKA FLOW DEMO: SEND → RETRIEVE → PROCESS
+  // ===========================================================================
+  
+  // Send message to Kafka
+  const sendKafkaMessage = async () => {
+    if (!kafkaMessage.trim()) return;
+
+    setKafkaFlowStep(1); // Sending
+    addLog(`📤 SENDING to Kafka topic "${kafkaTopic}"...`);
+
+    try {
+      const res = await axios.post(`${API_URL}/kafka/send`, {
+        topic: kafkaTopic,
+        message: { text: kafkaMessage, timestamp: Date.now() }
+      });
+
+      setKafkaFlowStep(2); // Sent
+      addLog(`✅ Message SENT to Kafka! ID: ${res.data.message.id}`, 'success');
+      
+      // Refresh sent messages
+      fetchSentMessages();
+      
+      // Wait a moment then check for processed
+      setKafkaMessage('');
+      
+      // Auto-check for processed message after 1 second
+      setTimeout(async () => {
+        setKafkaFlowStep(3); // Retrieving
+        addLog(`📥 RETRIEVING processed messages...`);
+        await fetchProcessedMessages();
+        setKafkaFlowStep(4); // Processed
+        addLog(`✅ Message PROCESSED by consumer!`, 'success');
+      }, 1000);
+
+    } catch (err) {
+      addLog('Failed to send Kafka message', 'error');
+      setKafkaFlowStep(0);
+    }
+  };
+
+  // Fetch sent messages
+  const fetchSentMessages = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/kafka/messages/sent`);
+      setSentMessages(res.data.messages);
+    } catch (err) {
+      addLog('Failed to fetch sent messages', 'error');
+    }
+  };
+
+  // Fetch processed messages
+  const fetchProcessedMessages = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/kafka/messages/processed`);
+      setProcessedMessages(res.data.messages);
+    } catch (err) {
+      addLog('Failed to fetch processed messages', 'error');
+    }
+  };
+
+  // Clear all Kafka messages
+  const clearKafkaMessages = async () => {
+    try {
+      await axios.delete(`${API_URL}/kafka/messages`);
+      setSentMessages([]);
+      setProcessedMessages([]);
+      setKafkaFlowStep(0);
+      addLog('All Kafka messages cleared', 'success');
+    } catch (err) {
+      addLog('Failed to clear messages', 'error');
+    }
+  };
+
   // Initial load
   useEffect(() => {
     fetchHealth();
@@ -237,6 +318,8 @@ function App() {
     fetchLeaderboard();
     fetchUsers();
     fetchOrders();
+    fetchSentMessages();
+    fetchProcessedMessages();
   }, []);
 
   return (
@@ -447,6 +530,215 @@ function App() {
                 </span>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* Kafka Flow Demo - SEND → RETRIEVE → PROCESS */}
+        <section className="section" style={{ gridColumn: 'span 2' }}>
+          <h2>📨 Kafka Flow Demo: SEND → RETRIEVE → PROCESS</h2>
+          <p><small>See the complete Kafka message flow in real-time</small></p>
+
+          {/* Flow Steps Visual */}
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            background: '#0d1117',
+            padding: '20px',
+            borderRadius: '10px',
+            marginBottom: '20px'
+          }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: '50%',
+                background: kafkaFlowStep >= 1 ? '#3182ce' : '#2d3748',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto',
+                fontSize: '24px'
+              }}>📤</div>
+              <p style={{ marginTop: '10px', fontWeight: kafkaFlowStep >= 1 ? 'bold' : 'normal' }}>
+                1. SEND
+              </p>
+              <small style={{ color: '#a0aec0' }}>Producer</small>
+            </div>
+
+            <div style={{ fontSize: '24px', color: '#4a5568' }}>→</div>
+
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: '50%',
+                background: kafkaFlowStep >= 2 ? '#6b46c1' : '#2d3748',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto',
+                fontSize: '24px'
+              }}>💾</div>
+              <p style={{ marginTop: '10px', fontWeight: kafkaFlowStep >= 2 ? 'bold' : 'normal' }}>
+                2. STORE
+              </p>
+              <small style={{ color: '#a0aec0' }}>Kafka Topic</small>
+            </div>
+
+            <div style={{ fontSize: '24px', color: '#4a5568' }}>→</div>
+
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: '50%',
+                background: kafkaFlowStep >= 3 ? '#38a169' : '#2d3748',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto',
+                fontSize: '24px'
+              }}>📥</div>
+              <p style={{ marginTop: '10px', fontWeight: kafkaFlowStep >= 3 ? 'bold' : 'normal' }}>
+                3. RETRIEVE
+              </p>
+              <small style={{ color: '#a0aec0' }}>Consumer</small>
+            </div>
+
+            <div style={{ fontSize: '24px', color: '#4a5568' }}>→</div>
+
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: '50%',
+                background: kafkaFlowStep >= 4 ? '#e53e3e' : '#2d3748',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto',
+                fontSize: '24px'
+              }}>⚙️</div>
+              <p style={{ marginTop: '10px', fontWeight: kafkaFlowStep >= 4 ? 'bold' : 'normal' }}>
+                4. PROCESS
+              </p>
+              <small style={{ color: '#a0aec0' }}>Transform</small>
+            </div>
+          </div>
+
+          {/* Send Message Form */}
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+              <select 
+                value={kafkaTopic}
+                onChange={e => setKafkaTopic(e.target.value)}
+                style={{
+                  background: '#2d3748',
+                  border: '1px solid #4a5568',
+                  color: '#fff',
+                  padding: '10px',
+                  borderRadius: '5px',
+                  flex: '0 0 200px'
+                }}
+              >
+                <option value="demo-topic">demo-topic</option>
+                <option value="orders">orders</option>
+                <option value="notifications">notifications</option>
+              </select>
+
+              <input
+                placeholder="Enter message (e.g., Hello Kafka!)"
+                value={kafkaMessage}
+                onChange={e => setKafkaMessage(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && sendKafkaMessage()}
+                style={{ flex: 1 }}
+              />
+
+              <button onClick={sendKafkaMessage} className="success">
+                📤 Send to Kafka
+              </button>
+            </div>
+
+            <button onClick={clearKafkaMessages} className="danger">
+              Clear All Messages
+            </button>
+          </div>
+
+          {/* Messages Display */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            {/* Sent Messages */}
+            <div>
+              <h4 style={{ borderBottom: '2px solid #3182ce', paddingBottom: '10px' }}>
+                📤 Sent Messages ({sentMessages.length})
+              </h4>
+              <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                {sentMessages.map((msg, i) => (
+                  <div key={i} className="card" style={{ marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span className="badge" style={{ background: '#3182ce' }}>SENT</span>
+                      <small>{new Date(msg.sentAt).toLocaleTimeString()}</small>
+                    </div>
+                    <pre style={{ fontSize: '11px', marginTop: '10px' }}>
+                      {JSON.stringify(msg.message, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+                {sentMessages.length === 0 && (
+                  <p style={{ color: '#a0aec0', textAlign: 'center' }}>No messages sent yet</p>
+                )}
+              </div>
+            </div>
+
+            {/* Processed Messages */}
+            <div>
+              <h4 style={{ borderBottom: '2px solid #38a169', paddingBottom: '10px' }}>
+                ⚙️ Processed Messages ({processedMessages.length})
+              </h4>
+              <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                {processedMessages.map((msg, i) => (
+                  <div key={i} className="card" style={{ marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span className="badge" style={{ background: '#38a169' }}>PROCESSED</span>
+                      <small>{new Date(msg.processedAt).toLocaleTimeString()}</small>
+                    </div>
+                    <div style={{ marginTop: '10px' }}>
+                      <strong>Original:</strong>
+                      <pre style={{ fontSize: '11px', color: '#a0aec0' }}>
+                        {JSON.stringify(msg.message?.value, null, 2)}
+                      </pre>
+                      <strong>Transformed:</strong>
+                      <pre style={{ fontSize: '11px', color: '#38a169' }}>
+                        {JSON.stringify(msg.message?.result?.transformed, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                ))}
+                {processedMessages.length === 0 && (
+                  <p style={{ color: '#a0aec0', textAlign: 'center' }}>No messages processed yet</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <div style={{ 
+            background: '#16213e', 
+            padding: '15px', 
+            borderRadius: '8px', 
+            marginTop: '20px',
+            fontSize: '14px'
+          }}>
+            <strong>How it works:</strong>
+            <ol style={{ margin: '10px 0', paddingLeft: '20px' }}>
+              <li><strong>SEND:</strong> Producer publishes message to Kafka topic</li>
+              <li><strong>STORE:</strong> Kafka stores message in partition (durable)</li>
+              <li><strong>RETRIEVE:</strong> Consumer reads message from topic</li>
+              <li><strong>PROCESS:</strong> Consumer transforms/handles the message</li>
+            </ol>
+            <p style={{ margin: 0, color: '#a0aec0' }}>
+              💡 Check the <strong>Activity Log</strong> below and backend logs (<code>docker logs lab-backend</code>) to see the full flow!
+            </p>
           </div>
         </section>
       </div>
