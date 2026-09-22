@@ -6,13 +6,285 @@ A complete Docker Compose setup for learning Redis and Kafka with a full-stack a
 
 ## 📋 Table of Contents
 
-1. [What is Redis?](#what-is-redis)
-2. [What is Kafka?](#what-is-kafka)
-3. [Quick Start](#quick-start)
-4. [Step-by-Step Testing Guide](#step-by-step-testing-guide)
-5. [Redis Deep Dive](#redis-deep-dive)
-6. [Kafka Deep Dive](#kafka-deep-dive)
-7. [Troubleshooting](#troubleshooting)
+1. [Architecture Overview](#-architecture-overview)
+2. [What is Redis?](#-what-is-redis)
+3. [What is Kafka?](#-what-is-kafka)
+4. [Redis vs Kafka - When to Use What](#-redis-vs-kafka---when-to-use-what)
+5. [Quick Start](#-quick-start)
+6. [UI Testing Guide](#-ui-testing-guide)
+7. [API Testing Guide](#-api-testing-guide)
+8. [Troubleshooting](#-troubleshooting)
+
+---
+
+## 🏗 Architecture Overview
+
+### System Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              YOUR BROWSER                                     │
+│                    http://localhost:3000 (React UI)                          │
+└─────────────────────────────────┬───────────────────────────────────────────┘
+                                  │
+                                  │ HTTP Requests (REST API)
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           BACKEND (Node.js)                                  │
+│                       http://localhost:3001                                  │
+│                                                                              │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐ │
+│  │  Redis Client   │  │ PostgreSQL Pool │  │   Kafka Producer/Consumer   │ │
+│  │                 │  │                 │  │                             │ │
+│  │ • Caching       │  │ • Users         │  │ • Publish order events      │ │
+│  │ • Rate Limit    │  │ • Products      │  │ • Consume order events      │ │
+│  │ • Sessions      │  │ • Orders        │  │ • Process asynchronously    │ │
+│  │ • Leaderboards  │  │                 │  │                             │ │
+│  └────────┬────────┘  └────────┬────────┘  └──────────────┬──────────────┘ │
+└───────────┼────────────────────┼──────────────────────────┼─────────────────┘
+            │                    │                          │
+            │                    │                          │
+            ▼                    ▼                          ▼
+     ┌──────────────┐    ┌──────────────┐          ┌──────────────┐
+     │    REDIS     │    │  POSTGRESQL  │          │    KAFKA     │
+     │  (In-Memory) │    │  (Disk-based)│          │  (Event Log) │
+     │              │    │              │          │              │
+     │ ⚡ ~1ms      │    │ 💾 ~100ms    │          │ 📨 Durable   │
+     │ • Key-Value  │    │ • Relational │          │ • Topics     │
+     │ • TTL/Expire │    │ • ACID       │          │ • Partitions │
+     │ • Pub/Sub    │    │ • Persistent │          │ • Offsets    │
+     └──────────────┘    └──────────────┘          └──────┬───────┘
+                                                        │
+                                                        │
+                                                        ▼
+                                                 ┌──────────────┐
+                                                 │  ZOOKEEPER   │
+                                                 │ (Kafka Coord)│
+                                                 └──────────────┘
+```
+
+### Data Flow Examples
+
+#### 1. Redis Caching Flow
+```
+User Request → Backend → Check Redis Cache
+                          ├─ HIT: Return cached data (1ms)
+                          └─ MISS: Query PostgreSQL → Cache result → Return (100ms)
+```
+
+#### 2. Kafka Order Processing Flow
+```
+User Creates Order → Backend → Save to PostgreSQL
+                              → Publish to Kafka "orders" topic
+                              → Return response to user
+
+(Separate Process)
+Kafka Consumer ← Reads from "orders" topic
+               → Process order (send email, update inventory, etc.)
+               → Multiple consumers can process same event independently
+```
+
+---
+
+## 🔴 What is Redis?
+
+### Definition
+**Redis** (Remote Dictionary Server) is an **in-memory data structure store** used as a database, cache, message broker, and streaming engine.
+
+### Key Characteristics
+| Characteristic | Description |
+|----------------|-------------|
+| **Speed** | All data in RAM → ~1ms latency (100x faster than disk DB) |
+| **Persistence** | Optional - can snapshot to disk |
+| **Data Types** | Strings, Lists, Sets, Sorted Sets, Hashes, Streams |
+| **Atomic** | All operations are atomic (thread-safe) |
+| **TTL** | Built-in expiration for keys |
+
+### Redis Data Types Explained
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ STRING - Simple key-value pair                                  │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ SET product:1 '{"name":"Laptop","price":999.99}'            │ │
+│ │ GET product:1  →  '{"name":"Laptop","price":999.99}'        │ │
+│ │ SETEX product:1 60 "..."  →  Expires in 60 seconds          │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ HASH - Like a JSON object (multiple fields in one key)         │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ HSET session:abc123 userId 1 username "alice"               │ │
+│ │ HGET session:abc123 username  →  "alice"                    │ │
+│ │ HGETALL session:abc123  →  {userId: "1", username: "alice"} │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ LIST - Ordered collection (like an array)                      │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ LPUSH queue:emails "email1" "email2"                        │ │
+│ │ RPOP queue:emails  →  "email2"                              │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ SET - Unordered unique collection                              │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ SADD online:users "alice" "bob"                             │ │
+│ │ SMEMBERS online:users  →  ["alice", "bob"]                  │ │
+│ │ SISMEMBER online:users "alice"  →  1 (true)                 │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ ZSET (Sorted Set) - Ranking with scores                        │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ ZADD leaderboard 100 "alice" 200 "bob"                      │ │
+│ │ ZREVRANGE leaderboard 0 9 WITHSCORES  →  Top 10             │ │
+│ │ ZRANK leaderboard "alice"  →  1 (position)                  │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Redis Use Cases in This Lab
+
+| Use Case | How It Works | Benefit |
+|----------|--------------|---------|
+| **Caching** | Store DB query results with TTL | Reduces DB load by 80%+, 100x faster responses |
+| **Rate Limiting** | `INCR` counter per IP with 60s TTL | Prevents API abuse, protects resources |
+| **Session Storage** | Hash with auto-expiration | Fast session lookup, automatic cleanup |
+| **Leaderboards** | Sorted Sets (ZSET) | Real-time rankings, O(log N) updates |
+| **Pub/Sub** | Publish/Subscribe channels | Simple real-time notifications |
+
+---
+
+## 📨 What is Kafka?
+
+### Definition
+**Apache Kafka** is a **distributed event streaming platform** for high-throughput, fault-tolerant messaging.
+
+### Key Characteristics
+| Characteristic | Description |
+|----------------|-------------|
+| **Throughput** | Millions of messages/second |
+| **Durability** | Messages persist on disk |
+| **Retention** | Configurable (days, weeks, forever) |
+| **Replay** | Can reprocess historical events |
+| **Scalability** | Partitioned across brokers |
+
+### Kafka Concepts Visualized
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         KAFKA TOPIC: "orders"                   │
+│                     (Like a folder for messages)                │
+│                                                                 │
+│  Partition 0          Partition 1          Partition 2          │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
+│  │ Offset 0     │    │ Offset 0     │    │ Offset 0     │      │
+│  │ Offset 1     │    │ Offset 1     │    │ Offset 1     │      │
+│  │ Offset 2     │    │ Offset 2     │    │              │      │
+│  │ Offset 3     │    │              │    │              │      │
+│  └──────────────┘    └──────────────┘    └──────────────┘      │
+│                                                                 │
+│  Each partition is:                                             │
+│  • Ordered (messages stay in sequence)                         │
+│  • Immutable (can't change, only append)                       │
+│  • Replicated (copies on multiple brokers)                     │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                      PRODUCER → TOPIC → CONSUMERS               │
+│                                                                 │
+│  ┌──────────┐         ┌─────────────┐        ┌──────────────┐  │
+│  │ Producer │────────▶│   Topic     │───────▶│ Consumer 1   │  │
+│  │ (Backend)│         │  "orders"   │        │ (Email Svc)  │  │
+│  └──────────┘         └─────────────┘        ├──────────────┤  │
+│                               │               │ Consumer 2   │  │
+│                               │               │ (Inventory)  │  │
+│                               │               ├──────────────┤  │
+│                               │               │ Consumer 3   │  │
+│                               │               │ (Analytics)  │  │
+│                               ▼               └──────────────┘  │
+│                        Each consumer gets                      │
+│                        ALL messages (independent processing)   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                     CONSUMER GROUPS                             │
+│                                                                 │
+│  Consumer Group "email-service" (1 consumer = all partitions)  │
+│  ┌────────────┐                                                 │
+│  │ Consumer A │ ◀─── Partition 0 + 1 + 2 (all messages)        │
+│  └────────────┘                                                 │
+│                                                                 │
+│  Consumer Group "order-processing" (3 consumers = 1 per part)  │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐                │
+│  │ Consumer B │  │ Consumer C │  │ Consumer D │                │
+│  └────────────┘  └────────────┘  └────────────┘                │
+│        │               │               │                       │
+│        ▼               ▼               ▼                       │
+│   Partition 0     Partition 1     Partition 2                  │
+│   (load balanced across consumers)                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Kafka Use Cases in This Lab
+
+| Use Case | How It Works | Benefit |
+|----------|--------------|---------|
+| **Order Processing** | Order created → Kafka event → Multiple services consume | Decouples services, fault-tolerant |
+| **Event Sourcing** | All order changes logged as events | Audit trail, can replay history |
+| **Async Processing** | Email, inventory, analytics consume independently | Non-blocking, scalable |
+
+---
+
+## 🔄 Redis vs Kafka - When to Use What
+
+### Comparison Matrix
+
+| Aspect | Redis | Kafka |
+|--------|-------|-------|
+| **Primary Use** | Cache, quick lookups | Event streaming, messaging |
+| **Speed** | Sub-millisecond | Milliseconds |
+| **Data Size** | Small (fits in RAM) | Unlimited (disk-based) |
+| **Persistence** | Optional (can lose data) | Guaranteed (durable) |
+| **Replay** | No | Yes (keep history) |
+| **Ordering** | Not guaranteed | Guaranteed per partition |
+| **Consumers** | Pub/Sub (all get message) | Consumer groups (load balanced) |
+
+### Decision Tree
+
+```
+                    Need to cache data?
+                    ┌─────────────────┐
+                    │                 │
+                   YES               NO
+                    │                 │
+                    ▼                 ▼
+              ┌──────────┐    Need real-time messaging?
+              │  REDIS   │    ┌─────────────────────┐
+              │ (Caching)│    │                     │
+              └──────────┘   YES                    NO
+                             │                      │
+                             ▼                      ▼
+                     Need message history?    Use PostgreSQL
+                     ┌─────────────────┐      (traditional DB)
+                     │                 │
+                    YES               NO
+                     │                 │
+                     ▼                 ▼
+               ┌──────────┐     ┌──────────┐
+               │  KAFKA   │     │  REDIS   │
+               │(Durable) │     │ (Pub/Sub)│
+               └──────────┘     └──────────┘
+```
+
+### Use Case Examples
+
+| Scenario | Use Redis When... | Use Kafka When... |
+|----------|-------------------|-------------------|
+| **Caching** | ✅ Store frequently accessed data | ❌ Not designed for caching |
+| **Rate Limiting** | ✅ Fast counter with TTL | ❌ Overkill for simple counters |
+| **Sessions** | ✅ Fast, auto-expiring | ❌ Too slow, wrong tool |
+| **Notifications** | Simple, fire-and-forget | Complex, need history/audit |
+| **Order Processing** | ❌ No durability guarantee | ✅ Durable, replayable |
+| **Analytics** | Real-time counters | ✅ Event stream for batch processing |
+| **Log Aggregation** | ❌ Not designed for this | ✅ Perfect for log streams |
 
 ---
 
@@ -47,468 +319,169 @@ docker-compose logs -f backend
 
 ---
 
-## 📚 What is Redis?
-
-**Redis** (Remote Dictionary Server) is an **in-memory key-value store**.
-
-### Why Use Redis?
-
-| Feature | Why It Matters |
-|---------|----------------|
-| **Speed** | ~1ms latency (100x faster than DB queries) |
-| **Caching** | Reduce database load significantly |
-| **Sessions** | Fast, auto-expiring session storage |
-| **Rate Limiting** | Prevent API abuse |
-| **Pub/Sub** | Simple real-time messaging |
-| **Leaderboards** | Sorted sets for rankings |
-
-### Redis Data Types
-
-```
-STRING  → "key": "value"
-LIST    → "key": ["a", "b", "c"]
-SET     → "key": {"a", "b", "c"} (unique)
-ZSET    → "leaderboard": {player1: 100, player2: 200}
-HASH    → "user:1": {name: "Alice", email: "alice@test.com"}
-```
-
----
-
-## 📨 What is Kafka?
-
-**Apache Kafka** is a **distributed event streaming platform**.
-
-### Why Use Kafka?
-
-| Feature | Why It Matters |
-|---------|----------------|
-| **Decoupling** | Services don't need to know about each other |
-| **Throughput** | Millions of messages per second |
-| **Durability** | Messages persist on disk |
-| **Replay** | Can reprocess historical events |
-| **Scalability** | Partitioned across multiple brokers |
-
-### Kafka Concepts
-
-```
-TOPIC       → Category of messages (like a folder)
-PARTITION   → Split topic for parallelism
-OFFSET      → Position in a partition (like a bookmark)
-PRODUCER    → Sends messages to topics
-CONSUMER    → Reads messages from topics
-CONSUMER GROUP → Multiple consumers sharing the work
-```
-
----
-
 ## 🎮 UI Testing Guide
 
 ### Open These URLs in Your Browser
 
-| UI | URL | Purpose |
-|----|-----|---------|
+| UI | URL | What You'll See |
+|----|-----|-----------------|
 | **React App** | http://localhost:3000 | Interactive Redis & Kafka demos |
-| **Kafka UI** | http://localhost:8080 | View topics, messages, consumers |
-| **Backend API** | http://localhost:3001/health | API health check |
+| **Kafka UI** | http://localhost:8080 | Topics, messages, consumers |
 
 ---
 
-### React UI - Interactive Demos (http://localhost:3000)
+### React UI Walkthrough (http://localhost:3000)
 
-#### 🔴 Redis Demo 1: Caching
+#### 🔴 Demo 1: Redis Caching
+
+**What's happening:**
+```
+1st Click → Backend checks Redis → NOT FOUND → Query PostgreSQL → Cache it → Return
+           │                       │
+           └── Cache MISS ─────────┘
+
+2nd Click → Backend checks Redis → FOUND → Return immediately
+           │                       │
+           └── Cache HIT! ─────────┘
+```
+
+**Steps:**
 1. Click any **product card** (Laptop, Mouse, etc.)
-2. Watch the badge:
-   - First click: `DATABASE` (red) = cache miss
-   - Second click: `CACHE` (green) = cache hit!
-3. Click **"Clear All Cache"** to reset
+2. Observe the badge:
+   - `DATABASE` = Data came from PostgreSQL (~100ms)
+   - `CACHE` = Data came from Redis (~1ms)
+3. Click **"Clear All Cache"** to reset and try again
 
-#### ⚡ Redis Demo 2: Rate Limiting
+---
+
+#### ⚡ Demo 2: Redis Rate Limiting
+
+**What's happening:**
+```
+Request 1  →  INCR ratelimit:127.0.0.1 → 1  →  EXPIRE 60s  →  Allow
+Request 2  →  INCR ratelimit:127.0.0.1 → 2  →  Already set  →  Allow
+...
+Request 10 →  INCR ratelimit:127.0.0.1 → 10 →  Already set  →  Allow
+Request 11 →  INCR ratelimit:127.0.0.1 → 11 →  Already set  →  DENY (429)
+```
+
+**Steps:**
 1. Click **"Send Request"** rapidly 10+ times
-2. Watch the progress bar fill
-3. After 10 requests: "Rate limit exceeded!"
-4. Wait 60 seconds to reset
+2. Watch the counter fill up
+3. After 10 requests: Rate limit exceeded!
+4. Wait 60 seconds for the TTL to expire
 
-#### 🏆 Redis Demo 3: Leaderboard
+---
+
+#### 🏆 Demo 3: Redis Leaderboard (Sorted Sets)
+
+**What's happening:**
+```
+ZADD leaderboard 100 "alice"   →  Add alice with score 100
+ZADD leaderboard 200 "bob"     →  Add bob with score 200
+ZREVRANGE leaderboard 0 9 WITHSCORES  →  Get top 10, highest first
+```
+
+**Steps:**
 1. Enter **username** and **score**
 2. Click **"Update Score"**
-3. Add more players - see real-time rankings!
+3. Leaderboard updates in real-time (sorted by score)
 
-#### 📦 Kafka Demo: Order Processing
-1. **Select a user** from dropdown
+---
+
+#### 📦 Demo 4: Kafka Order Processing
+
+**What's happening:**
+```
+┌──────────────────────────────────────────────────────────────┐
+│  User clicks "Create Order"                                  │
+│           │                                                  │
+│           ▼                                                  │
+│  Backend saves order to PostgreSQL                           │
+│           │                                                  │
+│           ▼                                                  │
+│  Backend publishes to Kafka "orders" topic                   │
+│           │                                                  │
+│           ├─────► Kafka Consumer (in backend) receives       │
+│           │         └── Updates order status                 │
+│           │                                                  │
+│           ▼                                                  │
+│  User sees "Order created and Kafka event sent"              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Steps:**
+1. **Select a user** from dropdown (alice, bob, or charlie)
 2. **Click products** to add to cart
-3. Click **"Create Order"** - sends Kafka event
-4. Check **Activity Log** for events
-5. Open **Kafka UI** to see the message!
+3. Click **"Create Order (Sends Kafka Event)"**
+4. Check the **Activity Log** at bottom for Kafka messages
+5. Open **Kafka UI** (http://localhost:8080) to see the actual message
 
 ---
 
-### Kafka UI (http://localhost:8080)
+### Kafka UI Walkthrough (http://localhost:8080)
 
-1. Click **Topics** → **orders**
-2. Click **Messages** tab
-3. See all order events with full JSON
-4. Create orders in React UI, refresh to see new messages
-
----
-
-### Redis CLI (Direct Testing)
-
-```powershell
-# Open Redis CLI
-docker exec -it lab-redis redis-cli
-
-# Try these commands:
-KEYS *                         # List all keys
-GET product:1                  # See cached product
-TTL product:1                  # Check expiration
-ZREVRANGE leaderboard 0 9 WITHSCORES   # Leaderboard
-
-exit
-```
+**Steps:**
+1. Click **Topics** in left sidebar
+2. Click **orders** topic
+3. Click **Messages** tab
+4. You'll see all order events with full JSON payload
+5. Create a new order in React UI, then refresh to see new message
 
 ---
 
-### Kafka CLI (Direct Testing)
+## 🧪 API Testing Guide
 
-```powershell
-# Enter Kafka container
-docker exec -it lab-kafka bash
-
-# List topics
-kafka-topics --bootstrap-server localhost:9092 --list
-
-# Consume messages
-kafka-console-consumer --bootstrap-server localhost:9092 --topic orders --from-beginning
-
-exit
-```
-
----
-
-## 🧪 Step-by-Step Testing Guide
-
-### STEP 1: Verify All Services Are Running
+### Test Redis Caching
 
 ```bash
-# Check container status
-docker-compose ps
-
-# All should show "Up" or "running"
-```
-
-**Expected Output:**
-```
-NAME           STATUS    PORTS
-lab-postgres   running   0.0.0.0:5432->5432/tcp
-lab-redis      running   0.0.0.0:6379->6379/tcp
-lab-zookeeper  running   2181/tcp
-lab-kafka      running   0.0.0.0:9092-9093->9092-9093/tcp
-lab-kafka-ui   running   0.0.0.0:8080->8080/tcp
-lab-backend    running   0.0.0.0:3001->3001/tcp
-lab-frontend   running   0.0.0.0:3000->3000/tcp
-```
-
-### STEP 2: Test Health Endpoint
-
-```bash
-curl http://localhost:3001/health
-```
-
-**Expected:**
-```json
-{
-  "status": "ok",
-  "services": {
-    "postgres": "connected",
-    "redis": "connected",
-    "kafka": "connected"
-  }
-}
-```
-
----
-
-## 🔴 REDIS TESTING
-
-### Test 1: Caching (See Cache Hit vs Miss)
-
-**What:** Demonstrates how Redis caches database queries.
-
-**Why:** Reduces database load and speeds up response times.
-
-```bash
-# First request - CACHE MISS (from database)
+# First request - Cache MISS
 curl http://localhost:3001/api/products/1
+# Returns: {"source":"database","data":{...}}
 
-# Second request - CACHE HIT (from Redis)
+# Second request - Cache HIT
 curl http://localhost:3001/api/products/1
-```
+# Returns: {"source":"cache","data":{...}}
 
-**What to observe:**
-- First request: `"source": "database"`
-- Second request: `"source": "cache"` (much faster!)
-
-**Clear cache and try again:**
-```bash
+# Clear cache
 curl -X DELETE http://localhost:3001/api/cache/clear
-curl http://localhost:3001/api/products/1  # Cache miss again
 ```
 
----
-
-### Test 2: Rate Limiting
-
-**What:** Limits requests per time window using Redis.
-
-**Why:** Prevents API abuse and protects resources.
+### Test Redis Rate Limiting
 
 ```bash
-# Run this command 11 times rapidly
+# Run 11 times rapidly
 curl http://localhost:3001/api/limited
+
+# First 10: {"message":"Request allowed","requestsRemaining":N}
+# 11th: HTTP 429 Too Many Requests
 ```
 
-**What happens:**
-- Requests 1-10: Returns `"message": "Request allowed"`
-- Request 11+: Returns `429 Too Many Requests`
-
-**Redis command behind the scenes:**
-```bash
-INCR ratelimit:<client_ip>
-EXPIRE ratelimit:<client_ip> 60
-```
-
----
-
-### Test 3: Session Storage
-
-**What:** Store user sessions with auto-expiration.
-
-**Why:** Sessions need to be fast and auto-expire for security.
-
-```bash
-# Create a session
-curl -X POST http://localhost:3001/api/session \
-  -H "Content-Type: application/json" \
-  -d '{"userId": 1, "username": "alice"}'
-
-# Response: {"sessionId": "session:1698123456789", ...}
-
-# Retrieve session
-curl http://localhost:3001/api/session/session:1698123456789
-```
-
----
-
-### Test 4: Leaderboards (Sorted Sets)
-
-**What:** Real-time rankings using Redis Sorted Sets.
-
-**Why:** Leaderboards need to be updated and queried instantly.
+### Test Redis Leaderboard
 
 ```bash
 # Add scores
 curl -X POST http://localhost:3001/api/leaderboard \
   -H "Content-Type: application/json" \
-  -d '{"username": "alice", "score": 100}'
+  -d '{"username":"alice","score":100}'
 
 curl -X POST http://localhost:3001/api/leaderboard \
   -H "Content-Type: application/json" \
-  -d '{"username": "bob", "score": 150}'
-
-curl -X POST http://localhost:3001/api/leaderboard \
-  -H "Content-Type: application/json" \
-  -d '{"username": "charlie", "score": 200}'
+  -d '{"username":"bob","score":200}'
 
 # Get leaderboard
 curl http://localhost:3001/api/leaderboard
 ```
 
-**Expected Response:**
-```json
-[
-  {"rank": 1, "username": "charlie", "score": 200},
-  {"rank": 2, "username": "bob", "score": 150},
-  {"rank": 3, "username": "alice", "score": 100}
-]
-```
-
----
-
-### Test 5: Pub/Sub (Publish/Subscribe)
-
-**What:** Simple real-time messaging.
-
-**Why:** Lighter alternative to Kafka for simple notifications.
+### Test Kafka Order Processing
 
 ```bash
-# Terminal 1: Subscribe to notifications
-docker exec -it lab-redis redis-cli
-SUBSCRIBE notifications
-
-# Terminal 2: Publish a message
-curl -X POST http://localhost:3001/api/notifications \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello from Redis Pub/Sub!"}'
-```
-
----
-
-### Test 6: Direct Redis CLI
-
-Connect to Redis directly:
-
-```bash
-# Open Redis CLI
-docker exec -it lab-redis redis-cli
-
-# Try these commands:
-SET mykey "Hello Redis"     # Store a value
-GET mykey                    # Retrieve value
-SETEX tempkey 10 "expires"   # Set with 10 second TTL
-TTL tempkey                  # Check remaining time
-DEL mykey                    # Delete key
-
-# See all keys
-KEYS *
-
-# Check leaderboard
-ZREVRANGE leaderboard 0 9 WITHSCORES
-
-# Exit
-exit
-```
-
----
-
-## 📨 KAFKA TESTING
-
-### Test 1: Create Order (Producer)
-
-**What:** Send an order event to Kafka.
-
-**Why:** Decouples order creation from processing.
-
-```bash
-# Create an order
+# Create order
 curl -X POST http://localhost:3001/api/orders \
   -H "Content-Type: application/json" \
-  -d '{
-    "userId": 1,
-    "items": [
-      {"productId": 1, "quantity": 2, "price": 999.99},
-      {"productId": 2, "quantity": 1, "price": 29.99}
-    ]
-  }'
-```
+  -d '{"userId":1,"items":[{"productId":1,"quantity":2,"price":999.99}]}'
 
-**What happens:**
-1. Order saved to PostgreSQL
-2. Kafka event published to `orders` topic
-3. Backend consumer receives and processes the event
-
----
-
-### Test 2: View Kafka Messages (Kafka UI)
-
-1. Open http://localhost:8080
-2. Click on **Topics** → **orders**
-3. Click **Messages** tab
-4. You'll see your order events!
-
----
-
-### Test 3: Kafka CLI Commands
-
-```bash
-# Enter Kafka container
-docker exec -it lab-kafka bash
-
-# List topics
-kafka-topics --bootstrap-server localhost:9092 --list
-
-# Create a new topic
-kafka-topics --bootstrap-server localhost:9092 --create \
-  --topic test-topic --partitions 3 --replication-factor 1
-
-# Describe a topic
-kafka-topics --bootstrap-server localhost:9092 --describe \
-  --topic orders
-
-# Produce messages
-kafka-console-producer --bootstrap-server localhost:9092 \
-  --topic test-topic
-> {"message": "Hello Kafka"}
-> {"message": "Learning Kafka"}
-> (Ctrl+C to exit)
-
-# Consume messages
-kafka-console-consumer --bootstrap-server localhost:9092 \
-  --topic test-topic --from-beginning
-
-# Consume with key and value
-kafka-console-consumer --bootstrap-server localhost:9092 \
-  --topic orders --from-beginning --property print.key=true \
-  --property key.separator=":"
-
-# Exit container
-exit
-```
-
----
-
-### Test 4: Update Order Status
-
-```bash
-# Update order status (sends Kafka event)
-curl -X PATCH http://localhost:3001/api/orders/1/status \
-  -H "Content-Type: application/json" \
-  -d '{"status": "shipped"}'
-
-# Check Kafka UI for new event
-```
-
----
-
-## 🌐 Frontend Testing
-
-1. Open http://localhost:3000
-2. Try the interactive demos:
-   - **Caching**: Click products to see cache hits/misses
-   - **Rate Limiting**: Click button rapidly to hit limit
-   - **Leaderboard**: Add scores and see real-time rankings
-   - **Orders**: Create orders and watch Kafka events
-
----
-
-## 📊 Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         FRONTEND (React)                        │
-│                      http://localhost:3000                      │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        BACKEND (Node.js)                        │
-│                      http://localhost:3001                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │    Redis     │  │  PostgreSQL  │  │    Kafka Producer    │  │
-│  │   Client     │  │    Client    │  │    + Consumer        │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
-└─────────┼─────────────────┼─────────────────────┼──────────────┘
-          │                 │                     │
-          ▼                 ▼                     ▼
-   ┌────────────┐    ┌────────────┐       ┌────────────┐
-   │   REDIS    │    │ POSTGRESQL │       │   KAFKA    │
-   │  Port 6379 │    │ Port 5432  │       │Port 9092/93│
-   └────────────┘    └────────────┘       └─────┬──────┘
-                                              │
-                                              ▼
-                                       ┌────────────┐
-                                       │ ZOOKEEPER  │
-                                       │ Port 2181  │
-                                       └────────────┘
+# Check Kafka UI at http://localhost:8080 to see the event
 ```
 
 ---
@@ -517,95 +490,33 @@ curl -X PATCH http://localhost:3001/api/orders/1/status \
 
 ### Common Issues
 
-**1. Port Already in Use**
+**Kafka not starting:**
 ```bash
-# Check what's using the port
-netstat -ano | findstr :3000
-
-# Stop all containers and try again
-docker-compose down
-docker-compose up -d
-```
-
-**2. Kafka Not Ready**
-```bash
-# Kafka takes time to start. Wait and check:
-docker-compose logs kafka | grep "started"
+# Kafka needs 60+ seconds. Wait and check:
+docker-compose logs kafka
 
 # Restart if needed
 docker-compose restart kafka backend
 ```
 
-**3. Backend Can't Connect**
+**Port conflicts:**
 ```bash
-# Check backend logs
-docker-compose logs backend
+# Check what's using ports
+netstat -ano | findstr :3000
 
-# Restart backend
-docker-compose restart backend
+# Stop all and restart
+docker-compose down
+docker-compose up -d
 ```
 
-**4. Clear Everything and Start Fresh**
+**Fresh start:**
 ```bash
-# Stop and remove all containers, networks, volumes
+# Remove all containers, networks, volumes
 docker-compose down -v
 
 # Rebuild and start
 docker-compose up -d --build
 ```
-
-### Useful Commands
-
-```bash
-# View all logs
-docker-compose logs -f
-
-# View specific service logs
-docker-compose logs -f backend
-
-# Restart a service
-docker-compose restart backend
-
-# Execute command in container
-docker exec -it lab-backend sh
-docker exec -it lab-redis redis-cli
-docker exec -it lab-kafka bash
-
-# Check container resource usage
-docker stats
-```
-
----
-
-## 📖 Further Learning
-
-### Redis Resources
-- [Redis Documentation](https://redis.io/docs/)
-- [Redis Commands](https://redis.io/commands/)
-- [Redis Use Cases](https://redis.com/redis-enterprise/technology/redis-use-cases/)
-
-### Kafka Resources
-- [Kafka Documentation](https://kafka.apache.org/documentation/)
-- [KafkaJS (Node.js client)](https://kafka.js.org/)
-- [Kafka UI](https://github.com/provectus/kafka-ui)
-
----
-
-## 🎯 Summary
-
-### When to Use Redis
-- ✅ Caching frequently accessed data
-- ✅ Session storage
-- ✅ Rate limiting
-- ✅ Real-time leaderboards
-- ✅ Simple Pub/Sub
-
-### When to Use Kafka
-- ✅ Event sourcing
-- ✅ Service decoupling
-- ✅ High-throughput messaging
-- ✅ Log aggregation
-- ✅ Stream processing
 
 ---
 
@@ -615,9 +526,18 @@ docker stats
 # Stop all services
 docker-compose down
 
-# Stop and remove all data (volumes)
+# Stop and remove all data
 docker-compose down -v
 ```
+
+---
+
+## 📚 Further Learning
+
+- [Redis Documentation](https://redis.io/docs/)
+- [Redis Commands](https://redis.io/commands/)
+- [Kafka Documentation](https://kafka.apache.org/documentation/)
+- [KafkaJS (Node.js client)](https://kafka.js.org/)
 
 ---
 
