@@ -1,13 +1,12 @@
 # =============================================================================
 # DOCKER COMPOSE - FULL STACK LEARNING LAB
 # =============================================================================
-# This compose file sets up 6 services for learning Redis and Kafka:
+# This compose file sets up 4 services for learning Redis and Kafka:
 # 1. PostgreSQL - Relational database for persistent data
 # 2. Redis - In-memory cache and message broker
-# 3. Zookeeper - Required by Kafka for coordination
-# 4. Kafka - Distributed event streaming platform
-# 5. Backend - Node.js Express API
-# 6. Frontend - React application
+# 3. Kafka - Distributed event streaming platform (KRaft mode, no Zookeeper)
+# 4. Backend - Node.js Express API
+# 5. Frontend - React application
 # =============================================================================
 
 services:
@@ -69,27 +68,7 @@ services:
       - lab-network
 
   # ===========================================================================
-  # ZOOKEEPER - Kafka Coordination Service
-  # ===========================================================================
-  # WHAT: Zookeeper manages Kafka brokers (leader election, configs, etc.)
-  # WHY: Kafka needs Zookeeper to coordinate between brokers
-  # HOW: Single node for development (KRaft mode available in newer versions)
-  # ===========================================================================
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: lab-zookeeper
-    restart: unless-stopped
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_logs:/var/lib/zookeeper/log
-    networks:
-      - lab-network
-
-  # ===========================================================================
-  # KAFKA - Distributed Event Streaming Platform
+  # KAFKA - Distributed Event Streaming Platform (KRaft mode, no Zookeeper)
   # ===========================================================================
   # WHAT: Kafka is a distributed event streaming platform for high-throughput
   # WHY USE CASES:
@@ -104,36 +83,57 @@ services:
   #   - Consumers: Read messages from topics
   #   - Partitions: Split topics for parallelism
   #   - Offsets: Position of consumer in a partition
+  # NOTE: Using KRaft mode (no Zookeeper) for simpler setup
   # ===========================================================================
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    image: apache/kafka:3.7.0
     container_name: lab-kafka
     restart: unless-stopped
-    depends_on:
-      - zookeeper
     ports:
       - "9092:9092"
       - "9093:9093"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # KRaft mode configuration (no Zookeeper)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       
       # LISTENERS: How clients connect to Kafka
-      # INTERNAL (9092) - For internal Docker network
-      # EXTERNAL (9093) - For host machine connections
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9093
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # PLAINTEXT (9092) - For internal Docker network (no auth for simplicity)
+      # SASL_PLAINTEXT (9093) - For external connections (with authentication)
+      # CONTROLLER (29093) - For KRaft controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,SASL_PLAINTEXT://localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,SASL_PLAINTEXT://:9093,CONTROLLER://:29093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       
-      # TOPIC AUTO-CREATION (dev only - disable in production)
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # SASL/PLAIN AUTHENTICATION CONFIGURATION (for SASL_PLAINTEXT listener only)
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
       
-      # OFFSETS: How long Kafka keeps messages
+      # JAAS Configuration - Defines users and passwords for Kafka clients
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+      
+      # KRaft cluster ID
+      KAFKA_KRAFT_CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      # Log directory
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      # Single-node configuration
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
       - kafka_data:/var/lib/kafka/data
+      - ./kafka/config/kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf:ro
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "-bootstrap-server", "localhost:9092"]
+      # Simple healthcheck without authentication (uses PLAINTEXT listener)
+      test: 
+        - CMD
+        - /opt/kafka/bin/kafka-broker-api-versions.sh
+        - --bootstrap-server
+        - localhost:9092
       interval: 10s
       timeout: 10s
       retries: 10
@@ -158,8 +158,12 @@ services:
       - "8080:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: lab-cluster
+      # Use PLAINTEXT listener for UI (no auth needed for internal Docker network)
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      # Authentication for Kafka UI Web Interface
+      AUTH_TYPE: "LOGIN_FORM"
+      SPRING_SECURITY_USER_NAME: "admin"
+      SPRING_SECURITY_USER_PASSWORD: "admin123"
     networks:
       - lab-network
 
@@ -195,8 +199,10 @@ services:
       # Redis connection
       REDIS_URL: redis://redis:6379
       
-      # Kafka connection
+      # Kafka connection (using PLAINTEXT listener for internal Docker network)
       KAFKA_BROKERS: kafka:9092
+      # Note: No SASL auth needed for PLAINTEXT listener (port 9092)
+      # For external connections, use port 9093 with SASL authentication
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -242,6 +248,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  zookeeper_data:
-  zookeeper_logs:
   kafka_data:

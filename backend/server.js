@@ -95,12 +95,34 @@ async function connectKafka() {
   kafka = new Kafka({
     clientId: 'lab-backend',
     brokers: [process.env.KAFKA_BROKERS],
+    // No SASL authentication for PLAINTEXT listener (internal Docker network)
   });
 
   // Producer: Sends messages to Kafka topics
   producer = kafka.producer();
   await producer.connect();
   console.log('✅ Kafka Producer connected');
+
+  // Create topics if they don't exist
+  const admin = kafka.admin();
+  await admin.connect();
+  console.log('✅ Kafka Admin connected');
+  
+  const topics = ['orders', 'notifications', 'demo-topic'];
+  try {
+    await admin.createTopics({
+      topics: topics.map(topic => ({
+        topic,
+        numPartitions: 1,
+        replicationFactor: 1,
+      })),
+      waitForLeaders: true,
+    });
+    console.log('✅ Kafka topics created/verified:', topics.join(', '));
+  } catch (err) {
+    console.log('ℹ️ Topics may already exist:', err.message);
+  }
+  await admin.disconnect();
 
   // Consumer: Reads messages from Kafka topics
   consumer = kafka.consumer({ groupId: 'lab-backend-group' });
