@@ -1,23 +1,23 @@
-# 🔥 Redis & Kafka Learning Lab
+# Redis & Kafka Learning Lab
 
 A complete Docker Compose setup for learning Redis and Kafka with a full-stack application (React + Node.js + PostgreSQL).
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
-1. [Architecture Overview](#-architecture-overview)
-2. [What is Redis?](#-what-is-redis)
-3. [What is Kafka?](#-what-is-kafka)
-4. [Redis vs Kafka - When to Use What](#-redis-vs-kafka---when-to-use-what)
-5. [Quick Start](#-quick-start)
-6. [UI Testing Guide](#-ui-testing-guide)
-7. [API Testing Guide](#-api-testing-guide)
-8. [Troubleshooting](#-troubleshooting)
+1. [Architecture Overview](#architecture-overview)
+2. [What is Redis?](#what-is-redis)
+3. [What is Kafka?](#what-is-kafka)
+4. [Redis vs Kafka - When to Use What](#redis-vs-kafka---when-to-use-what)
+5. [Quick Start](#quick-start)
+6. [UI Testing Guide](#ui-testing-guide)
+7. [API Testing Guide](#api-testing-guide)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
-## 🏗 Architecture Overview
+## Architecture Overview
 
 ### System Diagram
 
@@ -36,10 +36,10 @@ A complete Docker Compose setup for learning Redis and Kafka with a full-stack a
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐ │
 │  │  Redis Client   │  │ PostgreSQL Pool │  │   Kafka Producer/Consumer   │ │
 │  │                 │  │                 │  │                             │ │
-│  │ • Caching       │  │ • Users         │  │ • Publish order events      │ │
-│  │ • Rate Limit    │  │ • Products      │  │ • Consume order events      │ │
-│  │ • Sessions      │  │ • Orders        │  │ • Process asynchronously    │ │
-│  │ • Leaderboards  │  │                 │  │                             │ │
+│  │ - Caching       │  │ - Users         │  │ - Publish order events      │ │
+│  │ - Rate Limit    │  │ - Products      │  │ - Consume order events      │ │
+│  │ - Sessions      │  │ - Orders        │  │ - Process asynchronously    │ │
+│  │ - Leaderboards  │  │                 │  │                             │ │
 │  └────────┬────────┘  └────────┬────────┘  └──────────────┬──────────────┘ │
 └───────────┼────────────────────┼──────────────────────────┼─────────────────┘
             │                    │                          │
@@ -49,10 +49,10 @@ A complete Docker Compose setup for learning Redis and Kafka with a full-stack a
      │    REDIS     │    │  POSTGRESQL  │          │    KAFKA     │
      │  (In-Memory) │    │  (Disk-based)│          │  (Event Log) │
      │              │    │              │          │              │
-     │ ⚡ ~1ms      │    │ 💾 ~100ms    │          │ 📨 Durable   │
-     │ • Key-Value  │    │ • Relational │          │ • Topics     │
-     │ • TTL/Expire │    │ • ACID       │          │ • Partitions │
-     │ • Pub/Sub    │    │ • Persistent │          │ • Offsets    │
+     │ ~1ms         │    │ ~100ms       │          │ Durable      │
+     │ - Key-Value  │    │ - Relational │          │ - Topics     │
+     │ - TTL/Expire │    │ - ACID       │          │ - Partitions │
+     │ - Pub/Sub    │    │ - Persistent │          │ - Offsets    │
      └──────────────┘    └──────────────┘          └──────┬───────┘
                                                         │
                                                         │
@@ -67,26 +67,26 @@ A complete Docker Compose setup for learning Redis and Kafka with a full-stack a
 
 #### 1. Redis Caching Flow
 ```
-User Request → Backend → Check Redis Cache
-                          ├─ HIT: Return cached data (1ms)
-                          └─ MISS: Query PostgreSQL → Cache result → Return (100ms)
+User Request -> Backend -> Check Redis Cache
+                          +-- HIT: Return cached data (1ms)
+                          +-- MISS: Query PostgreSQL -> Cache result -> Return (100ms)
 ```
 
 #### 2. Kafka Order Processing Flow
 ```
-User Creates Order → Backend → Save to PostgreSQL
-                              → Publish to Kafka "orders" topic
-                              → Return response to user
+User Creates Order -> Backend -> Save to PostgreSQL
+                              -> Publish to Kafka "orders" topic
+                              -> Return response to user
 
 (Separate Process)
-Kafka Consumer ← Reads from "orders" topic
-               → Process order (send email, update inventory, etc.)
-               → Multiple consumers can process same event independently
+Kafka Consumer <- Reads from "orders" topic
+               -> Process order (send email, update inventory, etc.)
+               -> Multiple consumers can process same event independently
 ```
 
 ---
 
-## 🔴 What is Redis?
+## What is Redis?
 
 ### Definition
 **Redis** (Remote Dictionary Server) is an **in-memory data structure store** used as a database, cache, message broker, and streaming engine.
@@ -94,7 +94,7 @@ Kafka Consumer ← Reads from "orders" topic
 ### Key Characteristics
 | Characteristic | Description |
 |----------------|-------------|
-| **Speed** | All data in RAM → ~1ms latency (100x faster than disk DB) |
+| **Speed** | All data in RAM -> ~1ms latency (100x faster than disk DB) |
 | **Persistence** | Optional - can snapshot to disk |
 | **Data Types** | Strings, Lists, Sets, Sorted Sets, Hashes, Streams |
 | **Atomic** | All operations are atomic (thread-safe) |
@@ -103,41 +103,41 @@ Kafka Consumer ← Reads from "orders" topic
 ### Redis Data Types Explained
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ STRING - Simple key-value pair                                  │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │ SET product:1 '{"name":"Laptop","price":999.99}'            │ │
-│ │ GET product:1  →  '{"name":"Laptop","price":999.99}'        │ │
-│ │ SETEX product:1 60 "..."  →  Expires in 60 seconds          │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│ HASH - Like a JSON object (multiple fields in one key)         │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │ HSET session:abc123 userId 1 username "alice"               │ │
-│ │ HGET session:abc123 username  →  "alice"                    │ │
-│ │ HGETALL session:abc123  →  {userId: "1", username: "alice"} │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│ LIST - Ordered collection (like an array)                      │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │ LPUSH queue:emails "email1" "email2"                        │ │
-│ │ RPOP queue:emails  →  "email2"                              │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│ SET - Unordered unique collection                              │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │ SADD online:users "alice" "bob"                             │ │
-│ │ SMEMBERS online:users  →  ["alice", "bob"]                  │ │
-│ │ SISMEMBER online:users "alice"  →  1 (true)                 │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│ ZSET (Sorted Set) - Ranking with scores                        │
-│ ┌─────────────────────────────────────────────────────────────┐ │
-│ │ ZADD leaderboard 100 "alice" 200 "bob"                      │ │
-│ │ ZREVRANGE leaderboard 0 9 WITHSCORES  →  Top 10             │ │
-│ │ ZRANK leaderboard "alice"  →  1 (position)                  │ │
-│ └─────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+| STRING - Simple key-value pair                                  |
+| +-------------------------------------------------------------+ |
+| | SET product:1 '{"name":"Laptop","price":999.99}'            | |
+| | GET product:1  ->  '{"name":"Laptop","price":999.99}'        | |
+| | SETEX product:1 60 "..."  ->  Expires in 60 seconds          | |
+| +-------------------------------------------------------------+ |
+|                                                                 |
+| HASH - Like a JSON object (multiple fields in one key)         |
+| +-------------------------------------------------------------+ |
+| | HSET session:abc123 userId 1 username "alice"               | |
+| | HGET session:abc123 username  ->  "alice"                    | |
+| | HGETALL session:abc123  ->  {userId: "1", username: "alice"} | |
+| +-------------------------------------------------------------+ |
+|                                                                 |
+| LIST - Ordered collection (like an array)                      |
+| +-------------------------------------------------------------+ |
+| | LPUSH queue:emails "email1" "email2"                        | |
+| | RPOP queue:emails  ->  "email2"                              | |
+| +-------------------------------------------------------------+ |
+|                                                                 |
+| SET - Unordered unique collection                              |
+| +-------------------------------------------------------------+ |
+| | SADD online:users "alice" "bob"                             | |
+| | SMEMBERS online:users  ->  ["alice", "bob"]                  | |
+| | SISMEMBER online:users "alice"  ->  1 (true)                 | |
+| +-------------------------------------------------------------+ |
+|                                                                 |
+| ZSET (Sorted Set) - Ranking with scores                        |
+| +-------------------------------------------------------------+ |
+| | ZADD leaderboard 100 "alice" 200 "bob"                      | |
+| | ZREVRANGE leaderboard 0 9 WITHSCORES  ->  Top 10             | |
+| | ZRANK leaderboard "alice"  ->  1 (position)                  | |
+| +-------------------------------------------------------------+ |
++-----------------------------------------------------------------+
 ```
 
 ### Redis Use Cases in This Lab
@@ -152,7 +152,7 @@ Kafka Consumer ← Reads from "orders" topic
 
 ---
 
-## 📨 What is Kafka?
+## What is Kafka?
 
 ### Definition
 **Apache Kafka** is a **distributed event streaming platform** for high-throughput, fault-tolerant messaging.
@@ -169,71 +169,70 @@ Kafka Consumer ← Reads from "orders" topic
 ### Kafka Concepts Visualized
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         KAFKA TOPIC: "orders"                   │
-│                     (Like a folder for messages)                │
-│                                                                 │
-│  Partition 0          Partition 1          Partition 2          │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
-│  │ Offset 0     │    │ Offset 0     │    │ Offset 0     │      │
-│  │ Offset 1     │    │ Offset 1     │    │ Offset 1     │      │
-│  │ Offset 2     │    │ Offset 2     │    │              │      │
-│  │ Offset 3     │    │              │    │              │      │
-│  └──────────────┘    └──────────────┘    └──────────────┘      │
-│                                                                 │
-│  Each partition is:                                             │
-│  • Ordered (messages stay in sequence)                         │
-│  • Immutable (can't change, only append)                       │
-│  • Replicated (copies on multiple brokers)                     │
-└─────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|                         KAFKA TOPIC: "orders"                   |
+|                     (Like a folder for messages)                |
+|                                                                 |
+|  Partition 0          Partition 1          Partition 2          |
+|  +--------------+    +--------------+    +--------------+      |
+|  | Offset 0     |    | Offset 0     |    | Offset 0     |      |
+|  | Offset 1     |    | Offset 1     |    | Offset 1     |      |
+|  | Offset 2     |    | Offset 2     |    |              |      |
+|  | Offset 3     |    |              |    |              |      |
+|  +--------------+    +--------------+    +--------------+      |
+|                                                                 |
+|  Each partition is:                                             |
+|  - Ordered (messages stay in sequence)                         |
+|  - Immutable (can't change, only append)                       |
+|  - Replicated (copies on multiple brokers)                     |
++-----------------------------------------------------------------+
 
-┌─────────────────────────────────────────────────────────────────┐
-│                      PRODUCER → TOPIC → CONSUMERS               │
-│                                                                 │
-│  ┌──────────┐         ┌─────────────┐        ┌──────────────┐  │
-│  │ Producer │────────▶│   Topic     │───────▶│ Consumer 1   │  │
-│  │ (Backend)│         │  "orders"   │        │ (Email Svc)  │  │
-│  └──────────┘         └─────────────┘        ├──────────────┤  │
-│                               │               │ Consumer 2   │  │
-│                               │               │ (Inventory)  │  │
-│                               │               ├──────────────┤  │
-│                               │               │ Consumer 3   │  │
-│                               │               │ (Analytics)  │  │
-│                               ▼               └──────────────┘  │
-│                        Each consumer gets                      │
-│                        ALL messages (independent processing)   │
-└─────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|                      PRODUCER -> TOPIC -> CONSUMERS               |
+|                                                                 |
+|  +----------+         +-------------+        +--------------+  |
+|  | Producer |-------->|   Topic     |------->| Consumer 1   |  |
+|  | (Backend)|         |  "orders"   |        | (Email Svc)  |  |
+|  +----------+         +-------------+        +--------------+  |
+|                               |               | Consumer 2   |  |
+|                               |               | (Inventory)  |  |
+|                               |               +--------------+  |
+|                               |               | Consumer 3   |  |
+|                               V               | (Analytics)  |  |
+|                        Each consumer gets      +--------------+  |
+|                        ALL messages (independent processing)   |
++-----------------------------------------------------------------+
 
-┌─────────────────────────────────────────────────────────────────┐
-│                     CONSUMER GROUPS                             │
-│                                                                 │
-│  Consumer Group "email-service" (1 consumer = all partitions)  │
-│  ┌────────────┐                                                 │
-│  │ Consumer A │ ◀─── Partition 0 + 1 + 2 (all messages)        │
-│  └────────────┘                                                 │
-│                                                                 │
-│  Consumer Group "order-processing" (3 consumers = 1 per part)  │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐                │
-│  │ Consumer B │  │ Consumer C │  │ Consumer D │                │
-│  └────────────┘  └────────────┘  └────────────┘                │
-│        │               │               │                       │
-│        ▼               ▼               ▼                       │
-│   Partition 0     Partition 1     Partition 2                  │
-│   (load balanced across consumers)                             │
-└─────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|                     CONSUMER GROUPS                             |
+|                                                                 |
+|  Consumer Group "email-service" (1 consumer = all partitions)  |
+|  +------------+                                                 |
+|  | Consumer A | <--- Partition 0 + 1 + 2 (all messages)        |
+|  +------------+                                                 |
+|                                                                 |
+|  Consumer Group "order-processing" (3 consumers = 1 per part)  |
+|  +------------+  +------------+  +------------+                |
+|  | Consumer B |  | Consumer C |  | Consumer D |                |
+|  +------------+  +------------+  +------------+                |
+|        |               |               |                       |
+|        V               V               V                       |
+|   Partition 0     Partition 1     Partition 2                  |
+|   (load balanced across consumers)                             |
++-----------------------------------------------------------------+
 ```
 
 ### Kafka Use Cases in This Lab
 
 | Use Case | How It Works | Benefit |
 |----------|--------------|---------|
-| **Order Processing** | Order created → Kafka event → Multiple services consume | Decouples services, fault-tolerant |
+| **Order Processing** | Order created -> Kafka event -> Multiple services consume | Decouples services, fault-tolerant |
 | **Event Sourcing** | All order changes logged as events | Audit trail, can replay history |
 | **Async Processing** | Email, inventory, analytics consume independently | Non-blocking, scalable |
 
 ---
 
-## 🔄 Redis vs Kafka - When to Use What
+## Redis vs Kafka - When to Use What
 
 ### Comparison Matrix
 
@@ -251,44 +250,44 @@ Kafka Consumer ← Reads from "orders" topic
 
 ```
                     Need to cache data?
-                    ┌─────────────────┐
-                    │                 │
+                    +-----------------+
+                    |                 |
                    YES               NO
-                    │                 │
-                    ▼                 ▼
-              ┌──────────┐    Need real-time messaging?
-              │  REDIS   │    ┌─────────────────────┐
-              │ (Caching)│    │                     │
-              └──────────┘   YES                    NO
-                             │                      │
-                             ▼                      ▼
+                    |                 |
+                    V                 V
+              +----------+    Need real-time messaging?
+              |  REDIS   |    +---------------------+
+              | (Caching)|    |                     |
+              +----------+   YES                    NO
+                             |                      |
+                             V                      V
                      Need message history?    Use PostgreSQL
-                     ┌─────────────────┐      (traditional DB)
-                     │                 │
+                     +-----------------+      (traditional DB)
+                     |                 |
                     YES               NO
-                     │                 │
-                     ▼                 ▼
-               ┌──────────┐     ┌──────────┐
-               │  KAFKA   │     │  REDIS   │
-               │(Durable) │     │ (Pub/Sub)│
-               └──────────┘     └──────────┘
+                     |                 |
+                     V                 V
+               +----------+     +----------+
+               |  KAFKA   |     |  REDIS   |
+               |(Durable) |     | (Pub/Sub)|
+               +----------+     +----------+
 ```
 
 ### Use Case Examples
 
 | Scenario | Use Redis When... | Use Kafka When... |
 |----------|-------------------|-------------------|
-| **Caching** | ✅ Store frequently accessed data | ❌ Not designed for caching |
-| **Rate Limiting** | ✅ Fast counter with TTL | ❌ Overkill for simple counters |
-| **Sessions** | ✅ Fast, auto-expiring | ❌ Too slow, wrong tool |
+| **Caching** | YES - Store frequently accessed data | NO - Not designed for caching |
+| **Rate Limiting** | YES - Fast counter with TTL | NO - Overkill for simple counters |
+| **Sessions** | YES - Fast, auto-expiring | NO - Too slow, wrong tool |
 | **Notifications** | Simple, fire-and-forget | Complex, need history/audit |
-| **Order Processing** | ❌ No durability guarantee | ✅ Durable, replayable |
-| **Analytics** | Real-time counters | ✅ Event stream for batch processing |
-| **Log Aggregation** | ❌ Not designed for this | ✅ Perfect for log streams |
+| **Order Processing** | NO - No durability guarantee | YES - Durable, replayable |
+| **Analytics** | Real-time counters | YES - Event stream for batch processing |
+| **Log Aggregation** | NO - Not designed for this | YES - Perfect for log streams |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Docker Desktop installed and running
@@ -319,7 +318,7 @@ docker-compose logs -f backend
 
 ---
 
-## 🎮 UI Testing Guide
+## UI Testing Guide
 
 ### Open These URLs in Your Browser
 
@@ -332,17 +331,17 @@ docker-compose logs -f backend
 
 ### React UI Walkthrough (http://localhost:3000)
 
-#### 🔴 Demo 1: Redis Caching
+#### Demo 1: Redis Caching
 
 **What's happening:**
 ```
-1st Click → Backend checks Redis → NOT FOUND → Query PostgreSQL → Cache it → Return
-           │                       │
-           └── Cache MISS ─────────┘
+1st Click -> Backend checks Redis -> NOT FOUND -> Query PostgreSQL -> Cache it -> Return
+           |                       |
+           +-- Cache MISS ---------+
 
-2nd Click → Backend checks Redis → FOUND → Return immediately
-           │                       │
-           └── Cache HIT! ─────────┘
+2nd Click -> Backend checks Redis -> FOUND -> Return immediately
+           |                       |
+           +-- Cache HIT! ---------+
 ```
 
 **Steps:**
@@ -354,15 +353,15 @@ docker-compose logs -f backend
 
 ---
 
-#### ⚡ Demo 2: Redis Rate Limiting
+#### Demo 2: Redis Rate Limiting
 
 **What's happening:**
 ```
-Request 1  →  INCR ratelimit:127.0.0.1 → 1  →  EXPIRE 60s  →  Allow
-Request 2  →  INCR ratelimit:127.0.0.1 → 2  →  Already set  →  Allow
+Request 1  ->  INCR ratelimit:127.0.0.1 -> 1  ->  EXPIRE 60s  ->  Allow
+Request 2  ->  INCR ratelimit:127.0.0.1 -> 2  ->  Already set  ->  Allow
 ...
-Request 10 →  INCR ratelimit:127.0.0.1 → 10 →  Already set  →  Allow
-Request 11 →  INCR ratelimit:127.0.0.1 → 11 →  Already set  →  DENY (429)
+Request 10 ->  INCR ratelimit:127.0.0.1 -> 10 ->  Already set  ->  Allow
+Request 11 ->  INCR ratelimit:127.0.0.1 -> 11 ->  Already set  ->  DENY (429)
 ```
 
 **Steps:**
@@ -373,13 +372,13 @@ Request 11 →  INCR ratelimit:127.0.0.1 → 11 →  Already set  →  DENY (429
 
 ---
 
-#### 🏆 Demo 3: Redis Leaderboard (Sorted Sets)
+#### Demo 3: Redis Leaderboard (Sorted Sets)
 
 **What's happening:**
 ```
-ZADD leaderboard 100 "alice"   →  Add alice with score 100
-ZADD leaderboard 200 "bob"     →  Add bob with score 200
-ZREVRANGE leaderboard 0 9 WITHSCORES  →  Get top 10, highest first
+ZADD leaderboard 100 "alice"   ->  Add alice with score 100
+ZADD leaderboard 200 "bob"     ->  Add bob with score 200
+ZREVRANGE leaderboard 0 9 WITHSCORES  ->  Get top 10, highest first
 ```
 
 **Steps:**
@@ -389,25 +388,25 @@ ZREVRANGE leaderboard 0 9 WITHSCORES  →  Get top 10, highest first
 
 ---
 
-#### 📦 Demo 4: Kafka Order Processing
+#### Demo 4: Kafka Order Processing
 
 **What's happening:**
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  User clicks "Create Order"                                  │
-│           │                                                  │
-│           ▼                                                  │
-│  Backend saves order to PostgreSQL                           │
-│           │                                                  │
-│           ▼                                                  │
-│  Backend publishes to Kafka "orders" topic                   │
-│           │                                                  │
-│           ├─────► Kafka Consumer (in backend) receives       │
-│           │         └── Updates order status                 │
-│           │                                                  │
-│           ▼                                                  │
-│  User sees "Order created and Kafka event sent"              │
-└──────────────────────────────────────────────────────────────┘
++--------------------------------------------------------------+
+|  User clicks "Create Order"                                  |
+|           |                                                  |
+|           V                                                  |
+|  Backend saves order to PostgreSQL                           |
+|           |                                                  |
+|           V                                                  |
+|  Backend publishes to Kafka "orders" topic                   |
+|           |                                                  |
+|           +-----> Kafka Consumer (in backend) receives       |
+|           |         +-- Updates order status                 |
+|           |                                                  |
+|           V                                                  |
+|  User sees "Order created and Kafka event sent"              |
++--------------------------------------------------------------+
 ```
 
 **Steps:**
@@ -419,44 +418,44 @@ ZREVRANGE leaderboard 0 9 WITHSCORES  →  Get top 10, highest first
 
 ---
 
-#### 📨 Demo 5: Kafka Flow Lab - SEND → RETRIEVE → PROCESS
+#### Demo 5: Kafka Flow Lab - SEND -> RETRIEVE -> PROCESS
 
 This is the **core Kafka learning demo**. You can clearly see the complete message flow.
 
 **What's happening:**
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  STEP 1: SEND                                                │
-│  User types message → Click "Send to Kafka"                 │
-│           │                                                  │
-│           ▼                                                  │
-│  STEP 2: STORE                                               │
-│  Backend publishes to Kafka "demo-topic"                    │
-│           │                                                  │
-│           ▼                                                  │
-│  STEP 3: RETRIEVE                                            │
-│  Kafka Consumer reads message from topic                    │
-│           │                                                  │
-│           ▼                                                  │
-│  STEP 4: PROCESS                                             │
-│  Consumer transforms message, adds metadata                 │
-│           │                                                  │
-│           ▼                                                  │
-│  Frontend polls every 2s and updates UI                     │
-└──────────────────────────────────────────────────────────────┘
++--------------------------------------------------------------+
+|  STEP 1: SEND                                                |
+|  User types message -> Click "Send to Kafka"                 |
+|           |                                                  |
+|           V                                                  |
+|  STEP 2: STORE                                               |
+|  Backend publishes to Kafka "demo-topic"                     |
+|           |                                                  |
+|           V                                                  |
+|  STEP 3: RETRIEVE                                            |
+|  Kafka Consumer reads message from topic                     |
+|           |                                                  |
+|           V                                                  |
+|  STEP 4: PROCESS                                             |
+|  Consumer transforms message, adds metadata                  |
+|           |                                                  |
+|           V                                                  |
+|  Frontend polls every 2s and updates UI                      |
++--------------------------------------------------------------+
 ```
 
 **Steps:**
-1. Find the **"📨 Kafka Flow Demo: SEND → RETRIEVE → PROCESS"** section
+1. Find the **"Kafka Flow Demo: SEND -> RETRIEVE -> PROCESS"** section
 2. Type a message in the input box
 3. Click **"Send to Kafka"**
-4. Watch the **flow steps** update (Sending → Sent → Retrieving → Processed)
+4. Watch the **flow steps** update (Sending -> Sent -> Retrieving -> Processed)
 5. See the message appear in **Processed Messages** panel
 6. Check the **Activity Log** for detailed steps
 
 ---
 
-#### 🎯 Demo 6: Manual Kafka Message (Kafka UI → Backend → Frontend)
+#### Demo 6: Manual Kafka Message (Kafka UI -> Backend -> Frontend)
 
 This demonstrates **external message injection** - simulating another service publishing to Kafka.
 
@@ -465,7 +464,7 @@ This demonstrates **external message injection** - simulating another service pu
 1. **Open Kafka UI**: http://localhost:8080
 
 2. **Navigate to Topics**:
-   - Click **Topics** → **demo-topic**
+   - Click **Topics** -> **demo-topic**
 
 3. **Produce a Message**:
    - Click **"Produce Message"** button
@@ -478,19 +477,19 @@ This demonstrates **external message injection** - simulating another service pu
 4. **Watch the Frontend** (http://localhost:3000):
    - Within **2 seconds**, a **green alert box** appears:
      ```
-     ┌───────────────────────────────────────────────────────┐
-     │  📨 New Message Received from Kafka!                  │
-     │  1 new message(s) arrived at 3:45:30 PM  [Dismiss]    │
-     │                                                       │
-     │  Message:                                            │
-     │  {                                                   │
-     │    "text": "Hello from Kafka UI!",                   │
-     │    "userId": 123                                     │
-     │  }                                                   │
-     └───────────────────────────────────────────────────────┘
+     +-------------------------------------------------------+
+     |  New Message Received from Kafka!                     |
+     |  1 new message(s) arrived at 3:45:30 PM  [Dismiss]    |
+     |                                                       |
+     |  Message:                                            |
+     |  {                                                   |
+     |    "text": "Hello from Kafka UI!",                   |
+     |    "userId": 123                                     |
+     |  }                                                   |
+     +-------------------------------------------------------+
      ```
    - The **Processed Messages** panel auto-updates
-   - The **Activity Log** shows: `📥 1 new message(s) retrieved from Kafka!`
+   - The **Activity Log** shows: `1 new message(s) retrieved from Kafka!`
 
 **This demonstrates:**
 - Kafka UI acts as a **separate producer**
@@ -511,19 +510,19 @@ This demonstrates **external message injection** - simulating another service pu
 
 ---
 
-## 🧪 API Testing Guide
+## API Testing Guide
 
-### 🔴 Redis Tests
+### Redis Tests
 
 ```bash
 # Test Caching
 curl http://localhost:3001/api/products/1
-# First: {"source":"database"} → Second: {"source":"cache"}
+# First: {"source":"database"} -> Second: {"source":"cache"}
 ```
 
 ---
 
-### 📨 Kafka Flow Lab - SEND → RETRIEVE → PROCESS
+### Kafka Flow Lab - SEND -> RETRIEVE -> PROCESS
 
 This is the core Kafka learning demo. You can clearly see:
 1. **SEND**: Producer publishes message to Kafka
@@ -544,10 +543,10 @@ curl -X POST http://localhost:3001/api/kafka/send \
 {
   "success": true,
   "flow": {
-    "step1_send": "✅ COMPLETED - Message sent to Kafka",
-    "step2_store": "⏳ Kafka storing message in partition",
-    "step3_retrieve": "⏳ Consumer will retrieve message",
-    "step4_process": "⏳ Consumer will process message"
+    "step1_send": "COMPLETED - Message sent to Kafka",
+    "step2_store": "Kafka storing message in partition",
+    "step3_retrieve": "Consumer will retrieve message",
+    "step4_process": "Consumer will process message"
   },
   "message": {
     "id": "1790090875998",
@@ -586,7 +585,7 @@ curl http://localhost:3001/api/kafka/messages/processed
         "transformed": {
           "text": "Hello Kafka!",
           "userId": 1,
-          "processed": true,           ← Added by consumer
+          "processed": true,
           "processedAt": "2026-09-22T15:27:56.041Z",
           "consumerId": "lab-backend-consumer"
         }
@@ -605,17 +604,17 @@ docker logs lab-backend 2>&1 | tail -50
 
 You'll see:
 ```
-📤 SEND: Publishing to Kafka topic "demo-topic"
-   ✅ Message sent to Kafka!
+SEND: Publishing to Kafka topic "demo-topic"
+   Message sent to Kafka!
 
-📨 KAFKA MESSAGE RETRIEVED
+KAFKA MESSAGE RETRIEVED
    Topic: demo-topic
    Offset: 0
    
-🔄 PROCESSING MESSAGE...
+PROCESSING MESSAGE...
    Type: DEMO MESSAGE
    
-💾 STORING RESULT
+STORING RESULT
    Status: processed
 ```
 
@@ -636,55 +635,55 @@ curl -X POST http://localhost:3001/api/kafka/send \
 ### Kafka Flow Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        KAFKA MESSAGE FLOW                                    │
-│                                                                              │
-│  1. SEND (Producer)                                                          │
-│  ┌──────────┐         ┌─────────────────────────────────────┐               │
-│  │  Client  │────────▶│ POST /api/kafka/send               │               │
-│  │          │         │ {topic: "demo-topic", message: {}} │               │
-│  └──────────┘         └──────────────────┬──────────────────┘               │
-│                                          │                                   │
-│                                          ▼                                   │
-│                              ┌─────────────────────┐                        │
-│                              │   KAFKA PRODUCER    │                        │
-│                              │   send() to topic   │                        │
-│                              └──────────┬──────────┘                        │
-│                                         │                                    │
-│  2. STORE                                ▼                                    │
-│                              ┌─────────────────────┐                        │
-│                              │   KAFKA BROKER      │                        │
-│                              │   Topic: demo-topic │                        │
-│                              │   Partition: 0      │                        │
-│                              │   Offset: 0, 1, 2...│                        │
-│                              └──────────┬──────────┘                        │
-│                                         │                                    │
-│  3. RETRIEVE                             ▼                                    │
-│                              ┌─────────────────────┐                        │
-│                              │   KAFKA CONSUMER    │                        │
-│                              │   eachMessage()     │                        │
-│                              └──────────┬──────────┘                        │
-│                                         │                                    │
-│  4. PROCESS                              ▼                                    │
-│                              ┌─────────────────────┐                        │
-│                              │   BUSINESS LOGIC    │                        │
-│                              │   • Transform data  │                        │
-│                              │   • Update DB       │                        │
-│                              │   • Send emails     │                        │
-│                              └──────────┬──────────┘                        │
-│                                         │                                    │
-│  5. STORE RESULT                         ▼                                    │
-│                              ┌─────────────────────┐                        │
-│                              │   storeProcessed    │                        │
-│                              │   Message()         │                        │
-│                              └──────────┬──────────┘                        │
-│                                         │                                    │
-│                                         ▼                                    │
-│  6. RETRIEVE RESULT         ┌─────────────────────────────┐                │
-│                             │ GET /api/kafka/messages/    │                │
-│                             │     processed               │                │
-│                             └─────────────────────────────┘                │
-└─────────────────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------------------+
+|                        KAFKA MESSAGE FLOW                                    |
+|                                                                              |
+|  1. SEND (Producer)                                                          |
+|  +----------+         +-------------------------------------+               |
+|  |  Client  |-------->| POST /api/kafka/send               |               |
+|  |          |         | {topic: "demo-topic", message: {}} |               |
+|  +----------+         +------------------|------------------+               |
+|                                          |                                   |
+|                                          V                                   |
+|                              +---------------------+                        |
+|                              |   KAFKA PRODUCER    |                        |
+|                              |   send() to topic   |                        |
+|                              +----------|----------+                        |
+|                                         |                                    |
+|  2. STORE                                V                                    |
+|                              +---------------------+                        |
+|                              |   KAFKA BROKER      |                        |
+|                              |   Topic: demo-topic |                        |
+|                              |   Partition: 0      |                        |
+|                              |   Offset: 0, 1, 2...|                        |
+|                              +----------|----------+                        |
+|                                         |                                    |
+|  3. RETRIEVE                             V                                    |
+|                              +---------------------+                        |
+|                              |   KAFKA CONSUMER    |                        |
+|                              |   eachMessage()     |                        |
+|                              +----------|----------+                        |
+|                                         |                                    |
+|  4. PROCESS                              V                                    |
+|                              +---------------------+                        |
+|                              |   BUSINESS LOGIC    |                        |
+|                              |   - Transform data  |                        |
+|                              |   - Update DB       |                        |
+|                              |   - Send emails     |                        |
+|                              +----------|----------+                        |
+|                                         |                                    |
+|  5. STORE RESULT                         V                                    |
+|                              +---------------------+                        |
+|                              |   storeProcessed    |                        |
+|                              |   Message()         |                        |
+|                              +----------|----------+                        |
+|                                         |                                    |
+|                                         V                                    |
+|  6. RETRIEVE RESULT         +-----------------------------+                |
+|                             | GET /api/kafka/messages/    |                |
+|                             |     processed               |                |
+|                             +-----------------------------+                |
++-----------------------------------------------------------------------------+
 ```
 
 ---
@@ -759,7 +758,7 @@ curl -X POST http://localhost:3001/api/orders \
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -793,7 +792,7 @@ docker-compose up -d --build
 
 ---
 
-## 🛑 Stop the Lab
+## Stop the Lab
 
 ```bash
 # Stop all services
@@ -805,7 +804,7 @@ docker-compose down -v
 
 ---
 
-## 📚 Further Learning
+## Further Learning
 
 - [Redis Documentation](https://redis.io/docs/)
 - [Redis Commands](https://redis.io/commands/)
@@ -814,4 +813,4 @@ docker-compose down -v
 
 ---
 
-Happy Learning! 🚀
+Happy Learning!
