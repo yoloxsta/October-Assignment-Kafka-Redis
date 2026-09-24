@@ -92,11 +92,25 @@ let producer;
 let consumer;
 
 async function connectKafka() {
-  kafka = new Kafka({
+  // Kafka configuration - supports both local and Confluent Cloud
+  const kafkaConfig = {
     clientId: 'lab-backend',
     brokers: [process.env.KAFKA_BROKERS],
-    // No SASL authentication for PLAINTEXT listener (internal Docker network)
-  });
+  };
+  
+  // Add SASL authentication if credentials are provided (for Confluent Cloud simulation)
+  if (process.env.KAFKA_SASL_USERNAME && process.env.KAFKA_SASL_PASSWORD) {
+    kafkaConfig.sasl = {
+      mechanism: process.env.KAFKA_SASL_MECHANISM || 'PLAIN',
+      username: process.env.KAFKA_SASL_USERNAME,
+      password: process.env.KAFKA_SASL_PASSWORD,
+    };
+    // SSL is required for Confluent Cloud, optional for local SASL
+    kafkaConfig.ssl = process.env.KAFKA_SSL_ENABLED === 'true';
+    console.log('🔐 Connecting to Kafka with SASL authentication...');
+  }
+  
+  kafka = new Kafka(kafkaConfig);
 
   // Producer: Sends messages to Kafka topics
   producer = kafka.producer();
@@ -163,8 +177,14 @@ async function runConsumer() {
       console.log(`   Timestamp  : ${new Date(parseInt(message.timestamp)).toISOString()}`);
       console.log(`   Raw Value  : ${message.value?.toString()}`);
 
-      // Parse the message
-      const data = JSON.parse(message.value.toString());
+      // Parse the message (handle both JSON and plain text)
+      let data;
+      try {
+        data = JSON.parse(message.value.toString());
+      } catch (e) {
+        // If not valid JSON, treat as plain text
+        data = { text: message.value.toString(), raw: true };
+      }
       console.log(`\n🔄 PROCESSING MESSAGE...`);
       
       // Process based on topic (this is where business logic goes)

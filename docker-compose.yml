@@ -101,10 +101,10 @@ services:
       
       # LISTENERS: How clients connect to Kafka
       # PLAINTEXT (9092) - For internal Docker network (no auth for simplicity)
-      # SASL_PLAINTEXT (9093) - For external connections (with authentication)
+      # SASL_PLAINTEXT (9093) - For connections with authentication (internal and external)
       # CONTROLLER (29093) - For KRaft controller
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,SASL_PLAINTEXT://localhost:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,SASL_PLAINTEXT://kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://:9092,SASL_PLAINTEXT://:9093,CONTROLLER://:29093
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       
@@ -199,10 +199,16 @@ services:
       # Redis connection
       REDIS_URL: redis://redis:6379
       
-      # Kafka connection (using PLAINTEXT listener for internal Docker network)
-      KAFKA_BROKERS: kafka:9092
-      # Note: No SASL auth needed for PLAINTEXT listener (port 9092)
-      # For external connections, use port 9093 with SASL authentication
+      # Kafka connection
+      # OPTION 1: Local Kafka without auth (internal Docker network)
+      # KAFKA_BROKERS: kafka:9092
+      
+      # OPTION 2: Local Kafka with SASL auth (simulate Confluent Cloud)
+      KAFKA_BROKERS: kafka:9093
+      KAFKA_SASL_MECHANISM: PLAIN
+      KAFKA_SASL_USERNAME: backend
+      KAFKA_SASL_PASSWORD: backend-secret
+      KAFKA_SSL_ENABLED: "false"  # Set to "true" for real Confluent Cloud
     volumes:
       - ./backend:/app
       - /app/node_modules
