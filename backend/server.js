@@ -177,13 +177,18 @@ async function runConsumer() {
       console.log(`   Timestamp  : ${new Date(parseInt(message.timestamp)).toISOString()}`);
       console.log(`   Raw Value  : ${message.value?.toString()}`);
 
-      // Parse the message (handle both JSON and plain text)
+      // Parse the message (handle both JSON, plain text, and null/undefined)
       let data;
       try {
-        data = JSON.parse(message.value.toString());
+        if (!message.value) {
+          // Handle null/undefined message value
+          data = { text: '(empty message)', empty: true };
+        } else {
+          data = JSON.parse(message.value.toString());
+        }
       } catch (e) {
         // If not valid JSON, treat as plain text
-        data = { text: message.value.toString(), raw: true };
+        data = { text: message.value?.toString() || '(empty)', raw: true };
       }
       console.log(`\n🔄 PROCESSING MESSAGE...`);
       
